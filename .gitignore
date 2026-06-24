@@ -1,0 +1,34 @@
+# Environment & secrets
+.env
+*.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# SearXNG runtime data
+searxng/uwsgi.ini
+
+# Claude Code session data
+.claude/
+CLAUDE.md
+
+# Node (for React frontend later)
+node_modules/
+.next/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

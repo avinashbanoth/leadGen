@@ -1,0 +1,33 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "lead-gen-searxng"
+
+server:
+  secret_key: "lead-gen-searxng-secret-change-in-prod"
+  limiter: false
+  image_proxy: false
+  port: 8080
+  bind_address: "0.0.0.0"
+
+search:
+  safe_search: 0
+  default_lang: "en"
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: d
+    disabled: false
