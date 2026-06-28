@@ -20,10 +20,10 @@ _llm = None
 def _get_llm():
     global _llm
     if _llm is None:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        _llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+        from langchain_groq import ChatGroq
+        _llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
     return _llm
@@ -122,7 +122,7 @@ def _parse_scores(raw: str) -> list[dict]:
 async def lead_scoring(state: GraphState) -> dict:
     """
     Lead Scoring Agent — reads companies, people, and signals from GraphState
-    and asks Gemini 2.5 Flash to score each (company, person) pair 0–100.
+    and asks Groq llama-3.3-70b-versatile to score each (company, person) pair 0–100.
     IMPORTANT: This agent has NO tools. It cannot call any external service
     or look up new information. It reasons only over the data already in state.
     Writes list[LeadScore] to GraphState. Never raises.
@@ -142,7 +142,7 @@ async def lead_scoring(state: GraphState) -> dict:
         ])
         scores = _parse_scores(response.content)
     except Exception as e:
-        errors.append(f"lead_scoring: Gemini call failed — {e}")
+        errors.append(f"lead_scoring: LLM call failed — {e}")
         return {"lead_score": [], "errors": errors}
 
     if not scores:

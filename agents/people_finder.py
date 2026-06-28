@@ -25,7 +25,7 @@ def _get_llm():
     if _llm is None:
         from langchain_openai import ChatOpenAI
         _llm = ChatOpenAI(
-            model="llama3.1-70b",
+            model="gpt-oss-120b",
             base_url="https://api.cerebras.ai/v1",
             api_key=os.getenv("CEREBRAS_API_KEY"),
             temperature=0,

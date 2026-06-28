@@ -1,6 +1,6 @@
 import os
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from graph.state import GraphState
@@ -40,12 +40,12 @@ _chain = None
 def _get_chain():
     global _chain
     if _chain is None:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
-        _chain = llm.with_structured_output(QueryPlanModel)
+        _chain = llm.with_structured_output(QueryPlanModel, method="json_mode")
     return _chain
 
 # ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ Expand the role to cover equivalent titles:
 
 If no role is mentioned, set target_role to null.
 
-Return only the structured QueryPlan. No explanation, no preamble."""
+Return only valid JSON matching the QueryPlan schema. No explanation, no preamble, no markdown."""
 
 
 # ---------------------------------------------------------------------------
