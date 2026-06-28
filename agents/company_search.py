@@ -11,7 +11,7 @@ from tools.crawl4ai_tool import scrape_company_website
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Lazy Cerebras LLM — used for industry inference + relevance reasoning
+# Lazy Groq LLM — used for industry inference + relevance reasoning
 # ---------------------------------------------------------------------------
 
 _llm = None
@@ -20,11 +20,10 @@ _llm = None
 def _get_llm():
     global _llm
     if _llm is None:
-        from langchain_openai import ChatOpenAI
-        _llm = ChatOpenAI(
-            model="gpt-oss-120b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key=os.getenv("CEREBRAS_API_KEY"),
+        from langchain_groq import ChatGroq
+        _llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
     return _llm

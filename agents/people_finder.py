@@ -14,7 +14,7 @@ from tools.crosslinked_tool import search_crosslinked_people
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Lazy Cerebras LLM — scores how well a found title matches the target role
+# Lazy Groq LLM — scores how well a found title matches the target role
 # ---------------------------------------------------------------------------
 
 _llm = None
@@ -23,11 +23,10 @@ _llm = None
 def _get_llm():
     global _llm
     if _llm is None:
-        from langchain_openai import ChatOpenAI
-        _llm = ChatOpenAI(
-            model="gpt-oss-120b",
-            base_url="https://api.cerebras.ai/v1",
-            api_key=os.getenv("CEREBRAS_API_KEY"),
+        from langchain_groq import ChatGroq
+        _llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
     return _llm
@@ -141,7 +140,7 @@ async def people_finder(state: GraphState) -> dict:
     """
     People Finder Agent — for each company in GraphState, cascades through all
     4 LinkedIn layers to find decision makers matching the target role.
-    Scores title relevance with Cerebras (0.0–1.0). Drops results below 0.3.
+    Scores title relevance with Groq (0.0–1.0). Drops results below 0.3.
     Writes list[PersonData] with title_score filled to GraphState.
     Runs companies concurrently. Never raises — writes to errors on failure.
     """
