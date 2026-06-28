@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lead Gen Agent</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100%; }
+    body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+    textarea:focus { outline: none; border-color: #58a6ff !important; }
+    textarea { caret-color: #58a6ff; }
+    .example-chip:hover { border-color: #58a6ff !important; color: #c9d1d9 !important; }
+    .send-btn:hover:not(:disabled) { background: #2ea043 !important; }
+    .err-toggle:hover { color: #c9d1d9 !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const BASE = window.location.origin;
+
+    const STATUS_COLOR = {
+      complete              : '#3fb950',
+      no_results            : '#d29922',
+      awaiting_clarification: '#58a6ff',
+      rejected              : '#f85149',
+    };
+    const STATUS_LABEL = {
+      complete              : 'Complete',
+      no_results            : 'No Results',
+      awaiting_clarification: 'Clarification Needed',
+      rejected              : 'Rejected',
+    };
+    const TOKEN_EST = {
+      complete              : 16000,
+      no_results            : 12000,
+      awaiting_clarification: 1500,
+      rejected              : 800,
+    };
+
+    function fmtTokens(n) { return n >= 1000 ? `${(n / 1000).toFixed(0)}K` : `${n}`; }
+    function fmtTime(s) {
+      if (s < 60) return `${s.toFixed(1)}s`;
+      return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
+    }
+    function fmtCountdown(seconds) {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      return `${h}h ${m}m`;
+    }
+
+    function guessType(q) {
+      const lo = q.toLowerCase();
+      const rejects = ['weather', 'poem', 'write me', 'recipe', 'what is', 'explain', 'tell me about', 'how to'];
+      if (rejects.some(k => lo.includes(k))) return { label: 'Non-lead-gen', eta: '< 1s', tokens: 800 };
+      if (lo.split(/\s+/).length <= 4) return { label: 'May clarify', eta: '~ 2s', tokens: 1500 };
+      return { label: 'Full pipeline', eta: '~ 60s', tokens: 12000 };
+    }
+
+    // ----- small components -----
+
+    function Badge({ status }) {
+      const color = STATUS_COLOR[status] || '#8b949e';
+      return (
+        <span style={{
+          display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+          fontSize: 11, fontWeight: 600, letterSpacing: '0.03em',
+          background: color + '22', color, border: `1px solid ${color}44`,
+        }}>
+          {STATUS_LABEL[status] || status}
+        </span>
+      );
+    }
+
+    function ContactsTable({ contacts }) {
+      if (!contacts || contacts.length === 0) return null;
+      return (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 11, color: '#8b949e', fontWeight: 600, letterSpacing: '0.06em', marginBottom: 8 }}>
+            CONTACTS FOUND
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
+              <thead>
+                <tr>
+                  {['Name', 'Company', 'Title', 'Email', 'Status'].map(h => (
+                    <th key={h} style={{ textAlign: 'left', padding: '5px 8px', color: '#8b949e', borderBottom: '1px solid #30363d', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {contacts.map((c, i) => (
+                  <tr key={i} style={{ background: i % 2 ? '#ffffff06' : 'transparent' }}>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>{c.name || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>{c.company || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{c.title || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>{c.email || '—'}</td>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>
+                      <span style={{ color: c.status === 'verified' ? '#3fb950' : c.status === 'partial' ? '#d29922' : '#8b949e', fontSize: 11 }}>
+                        {c.status || '—'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function AgentMsg({ msg }) {
+      const [showErr, setShowErr] = useState(false);
+      return (
+        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+          <div style={{
+            maxWidth: '85%', background: '#161b22', border: '1px solid #30363d',
+            borderRadius: '2px 12px 12px 12px', padding: '12px 16px', fontSize: 14,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <Badge status={msg.status} />
+              {msg.elapsed != null && (
+                <span style={{ color: '#8b949e', fontSize: 12 }}>{fmtTime(msg.elapsed)}</span>
+              )}
+              {msg.estimated_tokens > 0 && (
+                <span style={{ color: '#8b949e', fontSize: 12 }}>~{fmtTokens(msg.estimated_tokens)} tokens</span>
+              )}
+            </div>
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{msg.content}</div>
+            <ContactsTable contacts={msg.contacts} />
+            {msg.errors && msg.errors.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <button className="err-toggle" onClick={() => setShowErr(v => !v)}
+                  style={{ background: 'none', border: 'none', color: '#8b949e', fontSize: 12, cursor: 'pointer', padding: 0 }}>
+                  {showErr ? '▲' : '▼'} {msg.errors.length} pipeline issue{msg.errors.length > 1 ? 's' : ''}
+                </button>
+                {showErr && (
+                  <div style={{ marginTop: 6, background: '#0d1117', borderRadius: 4, padding: '6px 10px' }}>
+                    {msg.errors.map((e, i) => (
+                      <div key={i} style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.7 }}>• {e}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function UserMsg({ content }) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{
+            maxWidth: '70%', background: '#1f4068', color: '#c9d1d9',
+            padding: '10px 14px', borderRadius: '12px 12px 2px 12px',
+            fontSize: 14, lineHeight: 1.5,
+          }}>
+            {content}
+          </div>
+        </div>
+      );
+    }
+
+    function LoadingMsg({ elapsed }) {
+      const dots = '.'.repeat((Math.floor(elapsed) % 3) + 1);
+      const pct = Math.min(100, (elapsed / 90) * 100);
+      return (
+        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+          <div style={{
+            background: '#161b22', border: '1px solid #30363d',
+            borderRadius: '2px 12px 12px 12px', padding: '12px 16px',
+            fontSize: 14, minWidth: 200, opacity: 0.8,
+          }}>
+            <div style={{ color: '#8b949e', marginBottom: 8 }}>
+              Searching{dots} <span style={{ color: '#58a6ff' }}>{fmtTime(elapsed)}</span>
+            </div>
+            <div style={{ height: 4, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', background: '#58a6ff', borderRadius: 2,
+                width: `${pct}%`, transition: 'width 0.5s linear',
+              }} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ----- Stats sidebar -----
+
+    function StatsPanel({ stats, lastMsg, nextEst }) {
+      const [countdown, setCountdown] = useState('');
+
+      useEffect(() => {
+        const tick = () => {
+          const now = new Date();
+          const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+          const diff = Math.max(0, Math.floor((next - now) / 1000));
+          setCountdown(fmtCountdown(diff));
+        };
+        tick();
+        const id = setInterval(tick, 30000);
+        return () => clearInterval(id);
+      }, []);
+
+      const used  = stats?.estimated_tokens_today || 0;
+      const limit = stats?.token_limit || 100_000;
+      const pct   = Math.min(100, Math.round((used / limit) * 100));
+      const barColor = pct > 90 ? '#f85149' : pct > 70 ? '#d29922' : '#3fb950';
+      const queriesLeft = Math.floor((limit - used) / 12_000);
+
+      return (
+        <aside style={{
+          width: 260, background: '#0d1117', borderLeft: '1px solid #30363d',
+          overflowY: 'auto', padding: '16px 14px', flexShrink: 0,
+          display: 'flex', flexDirection: 'column', gap: 0,
+        }}>
+          {/* Token usage */}
+          <Section title="TOKEN USAGE — TODAY">
+            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
+              <span style={{ color: '#c9d1d9' }}>{fmtTokens(used)}</span>
+              <span style={{ color: '#8b949e', fontSize: 14 }}> / {fmtTokens(limit)}</span>
+            </div>
+            <div style={{ height: 6, background: '#21262d', borderRadius: 3, overflow: 'hidden', marginBottom: 6 }}>
+              <div style={{ height: '100%', background: barColor, borderRadius: 3, width: `${pct}%`, transition: 'width 0.5s ease' }} />
+            </div>
+            <Row left={`${pct}% used`} right={`Resets in ${countdown}`} />
+          </Section>
+
+          {/* Queries */}
+          <Section title="QUERIES TODAY">
+            <div style={{ fontSize: 30, fontWeight: 700, color: '#58a6ff', lineHeight: 1, marginBottom: 4 }}>
+              {stats?.queries_today || 0}
+            </div>
+            <div style={{ color: '#8b949e', fontSize: 12 }}>
+              ~{Math.max(0, queriesLeft)} full-pipeline queries left
+            </div>
+          </Section>
+
+          {/* Last query */}
+          {lastMsg && (
+            <Section title="LAST QUERY">
+              <Row left="Status">
+                <Badge status={lastMsg.status} />
+              </Row>
+              <Row left="Time taken" right={fmtTime(lastMsg.elapsed || 0)} />
+              <Row left="Est. tokens" right={`~${fmtTokens(TOKEN_EST[lastMsg.status] || 8000)}`} />
+            </Section>
+          )}
+
+          {/* Next estimate */}
+          {nextEst && (
+            <Section title="NEXT QUERY ESTIMATE">
+              <Row left="Type" right={nextEst.label} />
+              <Row left="Est. time" right={nextEst.eta} highlight />
+              <Row left="Est. tokens" right={`~${fmtTokens(nextEst.tokens)}`} />
+            </Section>
+          )}
+
+          {/* Models */}
+          <Section title="MODELS" last>
+            <ModelRow tag="70b" color="#58a6ff" bg="#1a2a4a" label="Query parse · Lead score · Search" />
+            <ModelRow tag="8b" color="#3fb950" bg="#1a3a2a" label="Industry · Title scoring · Routing" />
+          </Section>
+        </aside>
+      );
+    }
+
+    function Section({ title, children, last }) {
+      return (
+        <div style={{ borderBottom: last ? 'none' : '1px solid #21262d', paddingBottom: 14, marginBottom: 14 }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600, marginBottom: 10 }}>
+            {title}
+          </div>
+          {children}
+        </div>
+      );
+    }
+
+    function Row({ left, right, children, highlight }) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ color: '#8b949e', fontSize: 12 }}>{left}</span>
+          {children || (
+            <span style={{ fontSize: 12, color: highlight ? '#58a6ff' : '#c9d1d9', fontWeight: 500 }}>{right}</span>
+          )}
+        </div>
+      );
+    }
+
+    function ModelRow({ tag, color, bg, label }) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ background: bg, color, padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+            {tag}
+          </span>
+          <span style={{ color: '#8b949e', fontSize: 11 }}>{label}</span>
+        </div>
+      );
+    }
+
+    // ----- Main App -----
+
+    const EXAMPLES = [
+      'Find CTOs at Series B SaaS companies in the US that use React',
+      'VP Engineering contacts at UK fintech startups with 50-200 employees',
+      'Founders of AI startups that raised Series A in 2024',
+    ];
+
+    function App() {
+      const [messages, setMessages]   = useState([]);
+      const [query, setQuery]         = useState('');
+      const [loading, setLoading]     = useState(false);
+      const [elapsed, setElapsed]     = useState(0);
+      const [serverUp, setServerUp]   = useState(false);
+      const [stats, setStats]         = useState(null);
+      const [lastMsg, setLastMsg]     = useState(null);
+      const [nextEst, setNextEst]     = useState(null);
+      const bottomRef  = useRef(null);
+      const timerRef   = useRef(null);
+      const startRef   = useRef(null);
+
+      // Health check
+      useEffect(() => {
+        const check = async () => {
+          try { setServerUp((await fetch(`${BASE}/health`)).ok); } catch { setServerUp(false); }
+        };
+        check();
+        const id = setInterval(check, 30000);
+        return () => clearInterval(id);
+      }, []);
+
+      // Stats polling
+      const fetchStats = useCallback(async () => {
+        try {
+          const r = await fetch(`${BASE}/stats`);
+          if (r.ok) setStats(await r.json());
+        } catch {}
+      }, []);
+
+      useEffect(() => {
+        fetchStats();
+        const id = setInterval(fetchStats, 60000);
+        return () => clearInterval(id);
+      }, [fetchStats]);
+
+      // Scroll to bottom
+      useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [messages, loading]);
+
+      // Live next-query estimate as user types
+      useEffect(() => {
+        setNextEst(query.trim() ? guessType(query) : null);
+      }, [query]);
+
+      const handleSend = async () => {
+        if (!query.trim() || loading) return;
+        const q = query.trim();
+        setQuery('');
+        setMessages(prev => [...prev, { role: 'user', content: q }]);
+        setLoading(true);
+        setElapsed(0);
+        startRef.current = Date.now();
+        timerRef.current = setInterval(() => {
+          setElapsed((Date.now() - startRef.current) / 1000);
+        }, 100);
+
+        try {
+          const res = await fetch(`${BASE}/chat`, {
+            method : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body   : JSON.stringify({ query: q }),
+          });
+          const data = await res.json();
+          const el   = (Date.now() - startRef.current) / 1000;
+          const msg  = {
+            role            : 'assistant',
+            content         : data.message,
+            status          : data.status,
+            contacts        : data.contacts || [],
+            errors          : data.errors   || [],
+            elapsed         : data.elapsed_seconds || el,
+            estimated_tokens: data.estimated_tokens || 0,
+          };
+          setMessages(prev => [...prev, msg]);
+          setLastMsg(msg);
+          fetchStats();
+        } catch (err) {
+          const el = (Date.now() - startRef.current) / 1000;
+          const msg = {
+            role: 'assistant', content: 'Failed to connect to the server.',
+            status: 'unknown', errors: [err.message], elapsed: el, estimated_tokens: 0,
+          };
+          setMessages(prev => [...prev, msg]);
+          setLastMsg(msg);
+        } finally {
+          clearInterval(timerRef.current);
+          setLoading(false);
+        }
+      };
+
+      const onKey = e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+      };
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+          {/* Header */}
+          <header style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '12px 20px', borderBottom: '1px solid #30363d', background: '#161b22', flexShrink: 0,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 16, fontWeight: 600 }}>
+              <span style={{ color: '#58a6ff', fontSize: 20 }}>◉</span>
+              Lead Gen Agent
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
+                background: serverUp ? '#3fb950' : '#f85149',
+              }} />
+              <span style={{ color: '#8b949e', fontSize: 12 }}>
+                {serverUp ? 'Server online' : 'Server offline'}
+              </span>
+            </div>
+          </header>
+
+          {/* Body */}
+          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+            {/* Chat column */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              {/* Messages */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {messages.length === 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 8, color: '#8b949e', textAlign: 'center', padding: 40 }}>
+                    <div style={{ fontSize: 40, color: '#30363d', marginBottom: 4 }}>◉</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: '#c9d1d9' }}>Lead Gen Agent</div>
+                    <div style={{ fontSize: 13 }}>Find B2B decision makers at any company. Try:</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, width: '100%', maxWidth: 420 }}>
+                      {EXAMPLES.map((ex, i) => (
+                        <div key={i} className="example-chip"
+                          onClick={() => setQuery(ex)}
+                          style={{
+                            background: '#161b22', border: '1px solid #30363d',
+                            borderRadius: 8, padding: '9px 14px', fontSize: 13,
+                            cursor: 'pointer', textAlign: 'left', color: '#8b949e',
+                          }}>
+                          {ex}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {messages.map((m, i) =>
+                  m.role === 'user'
+                    ? <UserMsg key={i} content={m.content} />
+                    : <AgentMsg key={i} msg={m} />
+                )}
+                {loading && <LoadingMsg elapsed={elapsed} />}
+                <div ref={bottomRef} />
+              </div>
+
+              {/* Input bar */}
+              <div style={{
+                display: 'flex', gap: 10, padding: '14px 24px',
+                borderTop: '1px solid #30363d', background: '#0d1117', flexShrink: 0,
+              }}>
+                <textarea
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={onKey}
+                  disabled={loading}
+                  placeholder="Find CTOs at fintech startups in Germany..."
+                  rows={2}
+                  style={{
+                    flex: 1, background: '#161b22', border: '1px solid #30363d',
+                    borderRadius: 8, color: '#c9d1d9', padding: '10px 14px',
+                    fontSize: 14, resize: 'none', fontFamily: 'inherit',
+                  }}
+                />
+                <button
+                  className="send-btn"
+                  onClick={handleSend}
+                  disabled={!query.trim() || loading}
+                  style={{
+                    background: '#238636', color: '#fff', border: 'none',
+                    borderRadius: 8, padding: '0 20px', fontSize: 14,
+                    fontWeight: 600, cursor: 'pointer', flexShrink: 0,
+                    opacity: (!query.trim() || loading) ? 0.45 : 1,
+                  }}
+                >
+                  {loading ? '…' : 'Send'}
+                </button>
+              </div>
+            </div>
+
+            {/* Stats sidebar */}
+            <StatsPanel stats={stats} lastMsg={lastMsg} nextEst={nextEst} />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
