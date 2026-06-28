@@ -6,6 +6,7 @@ from agents.query_parser import query_parser
 from agents.clarification import clarification_node
 from agents.company_search import company_search
 from agents.people_finder import people_finder
+from agents.contact_enricher import contact_enricher
 from agents.result_formatter import result_formatter
 
 # Signal Filter and Lead Scoring are imported lazily inside build_graph()
@@ -44,13 +45,14 @@ def build_graph() -> StateGraph:
     graph = StateGraph(GraphState)
 
     # ── Register all nodes ──────────────────────────────────────────────────
-    graph.add_node("query_parser",     query_parser)
+    graph.add_node("query_parser",       query_parser)
     graph.add_node("clarification_node", clarification_node)
-    graph.add_node("company_search",   company_search)
-    graph.add_node("signal_filter",    signal_filter)
-    graph.add_node("people_finder",    people_finder)
-    graph.add_node("lead_scoring",     lead_scoring)
-    graph.add_node("result_formatter", result_formatter)
+    graph.add_node("company_search",     company_search)
+    graph.add_node("signal_filter",      signal_filter)
+    graph.add_node("people_finder",      people_finder)
+    graph.add_node("lead_scoring",       lead_scoring)
+    graph.add_node("contact_enricher",   contact_enricher)
+    graph.add_node("result_formatter",   result_formatter)
 
     # ── Entry point ─────────────────────────────────────────────────────────
     graph.set_entry_point("query_parser")
@@ -104,7 +106,8 @@ def build_graph() -> StateGraph:
     )
 
     graph.add_edge("people_finder",    "lead_scoring")
-    graph.add_edge("lead_scoring",     "result_formatter")
+    graph.add_edge("lead_scoring",     "contact_enricher")
+    graph.add_edge("contact_enricher", "result_formatter")
 
     # ── Terminal edges ───────────────────────────────────────────────────────
     graph.add_edge("clarification_node", END)
