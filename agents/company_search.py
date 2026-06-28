@@ -35,16 +35,22 @@ def _get_llm():
 
 _SEARCH_QUERY_PROMPT = """You are a B2B lead generation researcher.
 Given the company search criteria below, generate 3 concise SearXNG search queries
-that will find real company websites matching the criteria.
+that will find real company websites (NOT blog lists, NOT news articles, NOT directories).
+Each query should find an actual company's own website.
 Return ONLY a JSON array of 3 query strings. No explanation.
-Example: ["fintech startups UK 2024", "Series B SaaS company data analytics", ...]
+Example: ["fintech startup London payments site:company.com", "B2B SaaS analytics Series B", ...]
 
 Criteria:
 {criteria}"""
 
-_INDUSTRY_PROMPT = """You are a B2B analyst. Given this website content, infer:
-1. The company's industry (1-3 words, e.g. "B2B SaaS", "Fintech", "Healthcare IT")
-2. Whether this company matches the target criteria
+_INDUSTRY_PROMPT = """You are a B2B analyst. Given this website content, determine:
+1. Whether this is an ACTUAL company website (not a blog post, list article, directory, news site, or aggregator)
+2. The company's industry (1-3 words, e.g. "B2B SaaS", "Fintech", "Healthcare IT")
+3. Whether this company matches the target criteria
+
+IMPORTANT: Set matches=false if the page is a list ("Top 10 startups", "Best companies"),
+a blog post, a news article, a directory, or any aggregator site — even if it mentions the right industry.
+Only set matches=true for actual company websites.
 
 Criteria: {criteria}
 Website content (first 2000 chars):

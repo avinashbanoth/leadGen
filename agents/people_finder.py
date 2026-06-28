@@ -79,36 +79,52 @@ async def _find_people_for_company(
     """
 
     # Layer 1 — Voyager HTTP API (fastest, no browser)
-    people = await search_linkedin_people.ainvoke({
-        "company_name"  : company_name,
-        "target_titles" : title_variants,
-        "max_results"   : max_results,
-    })
+    try:
+        people = await search_linkedin_people.ainvoke({
+            "company_name"  : company_name,
+            "target_titles" : title_variants,
+            "max_results"   : max_results,
+        })
+    except Exception as e:
+        logger.info("people_finder: Layer 1 failed for '%s' (%s) — trying Layer 2", company_name, type(e).__name__)
+        people = []
 
     # Layer 2 — Camoufox stealth browser
     if not people:
-        people = await search_linkedin_people_browser.ainvoke({
-            "company_name"  : company_name,
-            "target_titles" : title_variants,
-            "max_results"   : max_results,
-        })
+        try:
+            people = await search_linkedin_people_browser.ainvoke({
+                "company_name"  : company_name,
+                "target_titles" : title_variants,
+                "max_results"   : max_results,
+            })
+        except Exception as e:
+            logger.info("people_finder: Layer 2 failed for '%s' (%s) — trying Layer 3", company_name, type(e).__name__)
+            people = []
 
     # Layer 3 — browser-use LLM-driven browser
     if not people:
-        people = await search_linkedin_people_agent.ainvoke({
-            "company_name"  : company_name,
-            "target_titles" : title_variants,
-            "max_results"   : max_results,
-        })
+        try:
+            people = await search_linkedin_people_agent.ainvoke({
+                "company_name"  : company_name,
+                "target_titles" : title_variants,
+                "max_results"   : max_results,
+            })
+        except Exception as e:
+            logger.info("people_finder: Layer 3 failed for '%s' (%s) — trying Layer 4", company_name, type(e).__name__)
+            people = []
 
     # Layer 4 — Crosslinked Google dorks, no login
     if not people:
-        people = await search_crosslinked_people.ainvoke({
-            "company_name"  : company_name,
-            "company_domain": company_domain,
-            "target_titles" : title_variants,
-            "max_results"   : max_results,
-        })
+        try:
+            people = await search_crosslinked_people.ainvoke({
+                "company_name"  : company_name,
+                "company_domain": company_domain,
+                "target_titles" : title_variants,
+                "max_results"   : max_results,
+            })
+        except Exception as e:
+            logger.info("people_finder: Layer 4 failed for '%s' (%s)", company_name, type(e).__name__)
+            people = []
 
     if not people:
         logger.info("people_finder: all 4 layers exhausted for '%s'.", company_name)
