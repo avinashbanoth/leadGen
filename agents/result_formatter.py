@@ -34,8 +34,8 @@ async def result_formatter(state: GraphState) -> dict:
 
     # ── Rejected / non-lead-gen query ───────────────────────────────────────
     if plan and not plan.get("is_lead_gen_query", True):
-        reason = plan.get("rejection_reason", "This doesn't look like a lead generation query.")
-        message = f"Sorry, I can only help with B2B lead generation queries.\n\nReason: {reason}"
+        reason = plan.get("rejection_reason") or "This doesn't look like a lead generation query."
+        message = f"Sorry, I can only help with B2B lead generation queries.\n\n{reason}"
         return {"messages": [message], "status": "rejected"}
 
     # ── Clarification needed ─────────────────────────────────────────────────
@@ -45,12 +45,23 @@ async def result_formatter(state: GraphState) -> dict:
 
     # ── No results ──────────────────────────────────────────────────────────
     if not contacts:
+        companies = state.get("companies", [])
+        people    = state.get("people", [])
         lines = [f"I couldn't find verified contacts for your query: \"{query}\""]
+        if companies:
+            lines.append(f"\nFound {len(companies)} matching company/companies:")
+            for c in companies[:5]:
+                name = c.get("name", "?")
+                site = c.get("website", "")
+                ind  = c.get("industry", "")
+                lines.append(f"  • {name}" + (f" ({ind})" if ind else "") + (f" — {site}" if site else ""))
+        if people:
+            lines.append(f"\nFound {len(people)} people but couldn't enrich their email addresses.")
         if errors:
-            lines.append(f"\nIssues encountered: {len(errors)}")
-            for e in errors[:3]:
+            lines.append(f"\nIssues encountered ({len(errors)}):")
+            for e in errors[:5]:
                 lines.append(f"  • {e}")
-        lines.append("\nTry refining your query with a more specific industry, company size, or role.")
+        lines.append("\nTip: try a more specific industry, location, or company name.")
         return {"messages": ["\n".join(lines)], "status": "no_results"}
 
     # ── Results found ────────────────────────────────────────────────────────

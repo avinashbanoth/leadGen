@@ -15,14 +15,15 @@ from agents.result_formatter import result_formatter
 
 def _after_company_search(state: GraphState) -> str:
     """
-    Edge after company_search: if people_finder is also needed, go there.
-    Otherwise jump straight to lead_scoring.
+    Edge after company_search.
+    Correct order: signal_filter → people_finder → lead_scoring.
+    signal_filter is checked first so it is never silently skipped.
     """
     agents_needed = state.get("query_plan", {}).get("agents_needed", [])
-    if "people_finder" in agents_needed:
-        return "people_finder"
     if "signal_filter" in agents_needed:
         return "signal_filter"
+    if "people_finder" in agents_needed:
+        return "people_finder"
     return "lead_scoring"
 
 

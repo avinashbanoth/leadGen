@@ -1,5 +1,5 @@
 import os
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -28,6 +28,11 @@ class QueryPlanModel(BaseModel):
     signal_hints        : list[str]             = Field(default_factory=list, description="Behavioral signals to look for e.g. ['hiring devops', 'cloud cost issues']")
     target_role         : str | None            = Field(None, description="Decision maker role to find e.g. 'CTO', 'VP Engineering', 'HR Head'")
     agents_needed       : list[str]             = Field(default_factory=list, description="Agents to activate: any of ['company_search', 'signal_filter', 'people_finder']")
+
+    @field_validator("signal_hints", "agents_needed", mode="before")
+    @classmethod
+    def coerce_null_to_list(cls, v):
+        return v if isinstance(v, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +84,15 @@ Ask when the query is a valid lead-gen intent but lacks enough detail to search:
 Do NOT ask for clarification if the query has enough to start searching.
 
 ## agents_needed rules
-- Include "company_search" when the query mentions an industry, company type, or location
-- Include "signal_filter" when the query mentions a behavioral signal (hiring, cloud costs,
-  looking for a solution, struggling with something)
-- Include "people_finder" when the query asks for a specific role or person
-- Most real queries need ["company_search", "people_finder"] at minimum
+When needs_clarification is false, always include BOTH of:
+- "company_search" — finds and verifies companies so people_finder has domains to work with.
+  Even when a company is named directly ("Razorpay"), company_search must still run to populate
+  company state with domain, confidence, and metadata.
+- "people_finder" — finds the decision makers. This system always finds people.
+Also include "signal_filter" when the query mentions a behavioral signal (hiring, cloud costs,
+recent funding, struggling with something).
+Result: almost every valid query has agents_needed = ["company_search", "people_finder"] or
+["company_search", "signal_filter", "people_finder"].
 
 ## signal_hints
 Extract implied behavioral signals from the query:
@@ -97,7 +106,16 @@ Expand the role to cover equivalent titles:
 - "HR head" → "HR Head / CHRO / VP People / Head of Human Resources"
 - "founder" → "Founder / Co-founder / CEO / Managing Director"
 
-If no role is mentioned, set target_role to null.
+If the query explicitly names a role, use that role (expanded).
+If no role is mentioned but needs_clarification is false, infer the most likely decision-maker
+for that industry:
+- Tech / software / SaaS / PLM / ERP / cloud → "CTO OR VP Engineering OR Head of Technology OR IT Director"
+- Fintech / payments / banking → "CTO OR VP Engineering OR Head of Product"
+- E-commerce / retail → "CTO OR Head of Technology OR VP Product"
+- Logistics / supply chain / manufacturing → "VP Operations OR Head of Supply Chain OR CTO"
+- Healthcare / pharma → "CIO OR VP Technology OR Head of IT"
+- General or unknown industry → "CEO OR Founder OR Managing Director OR CTO"
+Only set target_role to null when needs_clarification is true (query is too vague to act on).
 
 Return only valid JSON matching the QueryPlan schema. No explanation, no preamble, no markdown."""
 

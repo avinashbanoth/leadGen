@@ -94,7 +94,7 @@ def _build_context(state: GraphState) -> str:
 
 def _parse_scores(raw: str) -> list[dict]:
     """Extracts the JSON array from the LLM response and validates shape."""
-    match = re.search(r'\[.*?\]', raw, re.DOTALL)
+    match = re.search(r'\[.*\]', raw, re.DOTALL)   # greedy — captures full outer array, not first nested one
     if not match:
         return []
     try:
@@ -129,8 +129,8 @@ async def lead_scoring(state: GraphState) -> dict:
     """
     errors = list(state.get("errors", []))
 
-    if not state.get("people") and not state.get("companies"):
-        errors.append("lead_scoring: no people or companies in state — skipping.")
+    if not state.get("people"):
+        logger.info("lead_scoring: no people in state — skipping to avoid hallucinated scores.")
         return {"lead_score": [], "errors": errors}
 
     context = _build_context(state)
