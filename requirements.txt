@@ -1,0 +1,65 @@
+# =============================================================================
+# Lead Gen Multi-Agent — Python Dependencies
+# =============================================================================
+#
+# INSTALL ORDER — run these after `pip install -r requirements.txt`:
+#
+#   1. playwright install firefox
+#        Downloads the Playwright Firefox binary (used by playwright-stealth,
+#        browser-use, and as a fallback; Camoufox ships its own Firefox).
+#
+#   2. python -m camoufox fetch
+#        Downloads the patched anti-fingerprint Firefox binary for Camoufox.
+#        Must be run separately — pip install alone is NOT enough.
+#
+#   3. crawl4ai-setup   (optional — only if Crawl4AI fails on first use)
+#        Some systems need this to install Playwright Chromium for Crawl4AI.
+#
+# =============================================================================
+
+
+# -- Core Orchestration -------------------------------------------------------
+langgraph
+langchain
+langchain-core
+pydantic>=2.0
+
+
+# -- LLM Providers ------------------------------------------------------------
+langchain-google-genai      # Query Parser + Lead Scoring  (Gemini 2.5 Flash)
+langchain-groq              # Guard Router + browser-use   (Llama 3.1 8B Instant)
+langchain-openai            # Company/Signal/People agents (Cerebras Llama 70B via OpenAI-compat endpoint)
+
+
+# -- API ----------------------------------------------------------------------
+fastapi
+uvicorn[standard]
+
+
+# -- HTTP / Async -------------------------------------------------------------
+aiohttp
+httpx
+
+
+# -- Web Scraping -------------------------------------------------------------
+crawl4ai
+
+
+# -- LinkedIn Stack -----------------------------------------------------------
+linkedin-api                # Layer 1 — Voyager HTTP (cookie auth, no browser)
+camoufox                    # Layer 2 — anti-fingerprint Firefox (Playwright-based)
+playwright-stealth          # Layer 2 — extra JS patches on top of Camoufox
+browser-use                 # Layer 3 — LLM-driven browser automation (Groq)
+crosslinked                 # Layer 4 — Google dork-based email enumeration (no login)
+
+
+# -- Signal Sources -----------------------------------------------------------
+praw                        # Reddit PRAW (r/forhire, r/hiring, etc.)
+
+
+# -- Tech Stack Detection -----------------------------------------------------
+python-Wappalyzer           # Detect tech stack from a company website
+
+
+# -- Environment --------------------------------------------------------------
+python-dotenv
