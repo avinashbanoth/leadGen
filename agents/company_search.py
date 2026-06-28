@@ -11,22 +11,37 @@ from tools.crawl4ai_tool import scrape_company_website
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Lazy Groq LLM — used for industry inference + relevance reasoning
+# Two Groq LLMs:
+#   heavy (70b) — search query generation (needs creativity + accuracy)
+#   light (8b)  — industry inference (high-volume, simple classification)
 # ---------------------------------------------------------------------------
 
-_llm = None
+_llm_heavy = None
+_llm_light = None
 
 
-def _get_llm():
-    global _llm
-    if _llm is None:
+def _get_heavy_llm():
+    global _llm_heavy
+    if _llm_heavy is None:
         from langchain_groq import ChatGroq
-        _llm = ChatGroq(
+        _llm_heavy = ChatGroq(
             model="llama-3.3-70b-versatile",
             api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
-    return _llm
+    return _llm_heavy
+
+
+def _get_llm():
+    global _llm_light
+    if _llm_light is None:
+        from langchain_groq import ChatGroq
+        _llm_light = ChatGroq(
+            model="llama-3.1-8b-instant",
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0,
+        )
+    return _llm_light
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +101,7 @@ async def _generate_search_queries(criteria_str: str) -> list[str]:
     import json, re
     prompt = _SEARCH_QUERY_PROMPT.format(criteria=criteria_str)
     try:
-        response = await _get_llm().ainvoke([HumanMessage(content=prompt)])
+        response = await _get_heavy_llm().ainvoke([HumanMessage(content=prompt)])
         match = re.search(r'\[.*?\]', response.content, re.DOTALL)
         if match:
             return json.loads(match.group())
