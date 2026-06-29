@@ -61,6 +61,88 @@ async def _score_title(found_title: str, target_role: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Title validation — 3-step hybrid (Python → keyword → Groq 8b)
+# ---------------------------------------------------------------------------
+
+_REAL_TITLE_KEYWORDS = {
+    "ceo", "cto", "cfo", "coo", "founder", "director",
+    "vp", "vice president", "head", "manager", "president",
+    "partner", "owner", "md", "managing director", "lead",
+    "chief", "principal", "supervisor",
+}
+
+_VALIDATE_PROMPT = """You are a B2B title validator.
+
+Given a person's extracted title and company context,
+decide if this is a REAL specific corporate title or a VAGUE GENERIC GUESS.
+
+REAL titles are specific and meaningful in B2B context:
+CEO, CTO, VP Engineering, Head of Sales, Founder,
+Purchase Manager, Operations Head, Regional Director
+
+VAGUE titles are generic and non-specific:
+Entrepreneur, Professional, Employee, Business Person,
+Worker, Consultant (with no domain), Member, Associate
+
+Title: {title}
+Company: {company}
+Context from page: {page_snippet}
+
+Rules:
+- If title is specific and meaningful → return it exactly as-is
+- If title is vague or generic → return the single word: Unknown
+- If you are unsure → return the single word: Unknown
+- Return ONLY the title or the word Unknown. Nothing else."""
+
+
+async def _clean_title(title: str, company: str = "", page_snippet: str = "") -> str:
+    """
+    3-step title validator. Prevents hallucinated titles from reaching lead scoring.
+
+    Step 1 — Pure Python (zero tokens): catches null / empty / too-short titles.
+    Step 2 — Keyword match (zero tokens): passes known-real B2B titles immediately.
+    Step 3 — Groq 8b (llama-3.1-8b-instant): classifies ambiguous titles only.
+    """
+    # Step 1 — null / empty / whitespace-only → Unknown, no further work
+    if not title or len(title.strip()) < 2:
+        return "Unknown"
+
+    t = title.strip()
+    t_lower = t.lower()
+
+    # Step 2 — title contains a known-real keyword → trust it immediately
+    if any(kw in t_lower for kw in _REAL_TITLE_KEYWORDS):
+        return t
+
+    # Step 3 — ambiguous: ask Groq 8b to classify (single word response)
+    prompt = _VALIDATE_PROMPT.format(
+        title=t,
+        company=company or "unknown",
+        page_snippet=(page_snippet or "")[:200],
+    )
+    try:
+        response = await _get_llm().ainvoke([HumanMessage(content=prompt)])
+        result = response.content.strip()
+        if result and result.lower() != "unknown" and len(result) >= 2:
+            return result
+        return "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+async def _clean_people(people: list[dict]) -> list[dict]:
+    """Apply _clean_title() to every person in the list concurrently."""
+    async def _one(p: dict) -> dict:
+        p["title"] = await _clean_title(
+            title=p.get("title", ""),
+            company=p.get("company", ""),
+            page_snippet=p.get("page_snippet", ""),
+        )
+        return p
+    return list(await asyncio.gather(*[_one(p) for p in people]))
+
+
+# ---------------------------------------------------------------------------
 # Level 2 fallback titles — LLM generates Director/Manager equivalents
 # ---------------------------------------------------------------------------
 
@@ -112,6 +194,8 @@ async def _run_3_layers(
             "target_titles": title_variants,
             "max_results"  : max_results,
         })
+        if people:
+            people = await _clean_people(people)
     except Exception as e:
         logger.info("people_finder: Layer A (Apollo) failed for '%s' — %s", company_name, e)
         people = []
@@ -124,6 +208,8 @@ async def _run_3_layers(
                 "target_titles": title_variants,
                 "max_results"  : max_results,
             })
+            if people:
+                people = await _clean_people(people)
         except Exception as e:
             logger.info("people_finder: Layer B (Kompass) failed for '%s' — %s", company_name, e)
             people = []
@@ -136,6 +222,8 @@ async def _run_3_layers(
                 "target_titles": title_variants,
                 "max_results"  : max_results,
             })
+            if people:
+                people = await _clean_people(people)
         except Exception as e:
             logger.info("people_finder: Layer C (Zaubacorp) failed for '%s' — %s", company_name, e)
             people = []
@@ -152,6 +240,8 @@ async def _run_3_layers(
                 }),
                 timeout=30.0,
             )
+            if people:
+                people = await _clean_people(people)
         except asyncio.TimeoutError:
             logger.info("people_finder: Layer D (website team) timed out for '%s'", company_name)
             people = []
@@ -168,6 +258,8 @@ async def _run_3_layers(
                 "target_titles" : title_variants,
                 "max_results"   : max_results,
             })
+            if people:
+                people = await _clean_people(people)
         except Exception as e:
             logger.info("people_finder: Layer E (dorks) failed for '%s' — %s", company_name, e)
             people = []

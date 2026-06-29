@@ -36,10 +36,19 @@ Extract all people listed with their names and job titles.
 
 Return a JSON array only. Each element must have exactly these fields:
   "name": full name (string)
-  "title": job title (string)
+  "title": job title (string) or null if no title is explicitly shown next to the name
+
+TITLE EXTRACTION RULES:
+- Only extract a title that is EXPLICITLY written next to the person's name on the page
+- Example: if page says 'John Smith - Head of Operations' → extract 'Head of Operations'
+- Example: if page lists 'John Smith' with no title next to the name → return title as null
+- Never infer a title from the company type or industry
+- Never guess what role someone might have
+- Never use placeholders like Entrepreneur, Professional, Employee, Business Person, Worker, Consultant, Member
+- A null title is always better than a wrong title
 
 Rules:
-- Only include people who have BOTH a name and a title.
+- Include people who have a name even if their title is null.
 - Do not invent names or titles not present in the text.
 - If no people are found, return an empty array [].
 - Return ONLY the JSON array, no explanation.
@@ -116,8 +125,8 @@ async def _extract_people_from_text(text: str, company_name: str, domain: str) -
         results = []
         for p in people:
             name  = str(p.get("name", "")).strip()
-            title = str(p.get("title", "")).strip()
-            if name and title and len(name) >= 3:
+            title = str(p.get("title") or "").strip()   # null → empty string; _clean_title handles it
+            if name and len(name) >= 3:
                 results.append({
                     "name"        : name,
                     "title"       : title,
