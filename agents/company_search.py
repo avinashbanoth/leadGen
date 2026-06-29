@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from graph.state import GraphState
 from tools.searxng_tool import searxng_search
 from tools.crawl4ai_tool import scrape_company_website
+from tools.overpass_tool import search_overpass_businesses
 
 logger = logging.getLogger(__name__)
 
@@ -805,18 +806,51 @@ async def company_search(state: GraphState) -> dict:
             original_query,
         )
 
-    # ── Phase 0: Indian business directories (IndiaMart → JustDial) ─────────
+    # ── Phase 0: Indian directories + OpenStreetMap Overpass (concurrent) ───
+    # Both run in parallel; results are merged so each source adds unique names.
+    # Overpass fires only when a location is present (physical business data).
     company_names: list[str] = []
     from_directory = False
-    try:
-        company_names = await asyncio.wait_for(
-            _try_indian_directories(industry, location, max_names=8),
-            timeout=45.0,
+
+    _osm_keywords = (company_filters.get("keywords") or [])[:2]
+    if industry:
+        _osm_keywords = [industry] + _osm_keywords
+
+    async def _fetch_overpass_names() -> list[str]:
+        if not location:
+            return []
+        raw = await search_overpass_businesses.ainvoke({
+            "keywords"   : _osm_keywords,
+            "location"   : location,
+            "max_results": 8,
+        })
+        return [r["name"] for r in raw if r.get("name")]
+
+    _p0_dir, _p0_osm = await asyncio.gather(
+        asyncio.wait_for(_try_indian_directories(industry, location, max_names=8), timeout=45.0),
+        asyncio.wait_for(_fetch_overpass_names(), timeout=35.0),
+        return_exceptions=True,
+    )
+
+    if isinstance(_p0_dir, BaseException):
+        errors.append(f"company_search: Phase 0 (IndiaMart/JustDial) failed — {_p0_dir}")
+        _p0_dir = []
+    if isinstance(_p0_osm, BaseException):
+        errors.append(f"company_search: Phase 0 (Overpass) failed — {_p0_osm}")
+        _p0_osm = []
+
+    _seen_p0: set[str] = set()
+    for _n in (_p0_dir or []) + (_p0_osm or []):
+        if _n.lower() not in _seen_p0:
+            _seen_p0.add(_n.lower())
+            company_names.append(_n)
+
+    if company_names:
+        from_directory = True
+        logger.info(
+            "company_search: Phase 0 — %d directory + %d OSM = %d unique names.",
+            len(_p0_dir or []), len(_p0_osm or []), len(company_names),
         )
-        if company_names:
-            from_directory = True
-    except Exception as e:
-        errors.append(f"company_search: Phase 0 (IndiaMart/JustDial) failed — {e}")
 
     # ── Phase 1A: try known company directories directly (most reliable) ────────
     if not company_names:
