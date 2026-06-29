@@ -36,22 +36,35 @@ class QueryPlanModel(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# LLM — lazy init so the module can be imported without GOOGLE_API_KEY set
+# LLMs — heavy (70b) primary; light (8b) fallback when 70b hits daily quota
 # ---------------------------------------------------------------------------
 
-_chain = None
+_chain_heavy = None
+_chain_light = None
 
 
-def _get_chain():
-    global _chain
-    if _chain is None:
+def _get_chain_heavy():
+    global _chain_heavy
+    if _chain_heavy is None:
         llm = ChatGroq(
             model="llama-3.3-70b-versatile",
             api_key=os.getenv("GROQ_API_KEY"),
             temperature=0,
         )
-        _chain = llm.with_structured_output(QueryPlanModel, method="json_mode")
-    return _chain
+        _chain_heavy = llm.with_structured_output(QueryPlanModel, method="json_mode")
+    return _chain_heavy
+
+
+def _get_chain_light():
+    global _chain_light
+    if _chain_light is None:
+        llm = ChatGroq(
+            model="llama-3.1-8b-instant",
+            api_key=os.getenv("GROQ_API_KEY"),
+            temperature=0,
+        )
+        _chain_light = llm.with_structured_output(QueryPlanModel, method="json_mode")
+    return _chain_light
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -83,6 +96,18 @@ Ask when the query is a valid lead-gen intent but lacks enough detail to search:
 
 Do NOT ask for clarification if the query has enough to start searching.
 
+When needs_clarification is True, set clarification_ask to a message that:
+1. Echoes what you DID understand (e.g. "You're looking for startup contacts")
+2. Lists ONLY the specific missing pieces (industry? role? location?)
+3. Gives a concrete example of a complete query
+
+Example: If the user says "find startup contacts", set clarification_ask to:
+"You're looking for contacts at startups — here's what I still need:
+- Industry (e.g. fintech, SaaS, healthcare, logistics)
+- Decision-maker role (e.g. CTO, VP Sales, Founder — or leave it and I'll target the top executives)
+- Location (e.g. Bangalore, Germany, US)
+Try: \"Find CTOs at fintech startups in Bangalore\""
+
 ## agents_needed rules
 When needs_clarification is false, always include BOTH of:
 - "company_search" — finds and verifies companies so people_finder has domains to work with.
@@ -99,6 +124,21 @@ Extract implied behavioral signals from the query:
 - "struggling with Kubernetes costs" → ["kubernetes cost issues", "cloud cost optimization"]
 - "looking for payment integration" → ["payment gateway problems", "seeking payment solution"]
 - "Series B startups" → ["Series B", "recently funded", "growing team"]
+
+## company_filters
+ALWAYS fill these fields from the query (never leave all of them null):
+- industry: the industry or sector (e.g. "fintech", "logistics", "SaaS", "PLM")
+- location: the geographic location mentioned (e.g. "Bangalore", "Germany", "USA")
+- company_size: size if stated (e.g. "startup", "enterprise", "200+ employees")
+- keywords: 2–4 key search terms derived from the query
+
+Examples:
+- "Find CTOs of fintech startups in Bangalore"
+  → {industry: "fintech", location: "Bangalore", company_size: "startup", keywords: ["fintech", "startup", "Bangalore"]}
+- "HR heads at logistics companies in Germany with 200+ employees"
+  → {industry: "logistics", location: "Germany", company_size: "200+ employees", keywords: ["logistics", "supply chain"]}
+- "who is the VP Engineering at Razorpay"
+  → {industry: "fintech", location: "India", keywords: ["Razorpay", "fintech", "payments"]}
 
 ## target_role
 Expand the role to cover equivalent titles:
@@ -124,14 +164,25 @@ Return only valid JSON matching the QueryPlan schema. No explanation, no preambl
 # Node function
 # ---------------------------------------------------------------------------
 
+import logging as _logging
+_qp_logger = _logging.getLogger(__name__)
+
+
 async def query_parser(state: GraphState) -> dict:
     query = state["query"]
+    messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=query)]
 
     try:
-        result: QueryPlanModel = await _get_chain().ainvoke([
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=query),
-        ])
+        # Primary: 70b for best JSON accuracy
+        try:
+            result: QueryPlanModel = await _get_chain_heavy().ainvoke(messages)
+        except Exception as primary_err:
+            err_str = str(primary_err)
+            if "429" in err_str or "rate_limit" in err_str.lower() or "TPD" in err_str or "tokens per day" in err_str.lower():
+                _qp_logger.warning("query_parser: 70b quota hit — falling back to 8b-instant")
+                result = await _get_chain_light().ainvoke(messages)
+            else:
+                raise
 
         query_plan = {
             "is_lead_gen_query"  : result.is_lead_gen_query,

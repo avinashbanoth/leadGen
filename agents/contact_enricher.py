@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from graph.state import GraphState
@@ -102,17 +103,18 @@ async def _enrich_person(person: dict, companies: list[dict], lead_scores: list[
     suggestion = linkedin if not email and linkedin else None
 
     return {
-        "name"      : full_name,
-        "title"     : title,
-        "company"   : company,
-        "email"     : email,
-        "confidence": confidence,
-        "linkedin"  : linkedin,
-        "phone"     : person.get("phone"),
-        "score"     : score,
-        "status"    : status,
-        "tried"     : tried,
-        "suggestion": suggestion,
+        "name"       : full_name,
+        "title"      : title,
+        "company"    : company,
+        "email"      : email,
+        "confidence" : confidence,
+        "linkedin"   : linkedin,
+        "phone"      : person.get("phone"),
+        "score"      : score,
+        "status"     : status,
+        "tried"      : tried,
+        "suggestion" : suggestion,
+        "title_tier" : person.get("title_tier", 1),
     }
 
 
@@ -138,29 +140,50 @@ async def contact_enricher(state: GraphState) -> dict:
         errors.append("contact_enricher: no people in state — skipping.")
         return {"contacts": [], "errors": errors}
 
-    contacts: list[dict] = []
+    # Sort people by lead score (highest first), then cap to conserve quota.
+    # Default cap = 5; callers that need more can expand the people list before this node.
+    _MAX_ENRICH = 5
+    if lead_scores:
+        score_map = {ls.get("person", "").lower(): ls.get("score", 0) for ls in lead_scores}
+        people = sorted(people, key=lambda p: score_map.get(p.get("name", "").lower(), 0), reverse=True)
+    people = people[:_MAX_ENRICH]
+    if len(people) < len(state.get("people", [])):
+        logger.info(
+            "contact_enricher: capped enrichment to top %d of %d people (quota conservation).",
+            len(people), len(state.get("people", [])),
+        )
 
-    for person in people:
+    _PER_PERSON_TIMEOUT = 25.0   # max seconds per person across all 6 providers
+
+    async def _safe_enrich(person: dict) -> dict:
+        name = person.get("name", "unknown")
         try:
-            contact = await _enrich_person(person, companies, lead_scores)
-            contacts.append(contact)
+            return await asyncio.wait_for(
+                _enrich_person(person, companies, lead_scores),
+                timeout=_PER_PERSON_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            errors.append(f"contact_enricher: timed out for '{name}' after {_PER_PERSON_TIMEOUT}s")
         except Exception as e:
-            name = person.get("name", "unknown")
             errors.append(f"contact_enricher: failed for '{name}' — {e}")
-            # Partial result rather than silent failure (Rule 9)
-            contacts.append({
-                "name"      : name,
-                "title"     : person.get("title", ""),
-                "company"   : person.get("company", ""),
-                "email"     : None,
-                "confidence": 0,
-                "linkedin"  : person.get("linkedin_url", ""),
-                "phone"     : None,
-                "score"     : 0,
-                "status"    : "partial",
-                "tried"     : [],
-                "suggestion": person.get("linkedin_url") or None,
-            })
+        # Partial result rather than silent failure (Rule 9)
+        return {
+            "name"       : name,
+            "title"      : person.get("title", ""),
+            "company"    : person.get("company", ""),
+            "email"      : None,
+            "confidence" : 0,
+            "linkedin"   : person.get("linkedin_url", ""),
+            "phone"      : None,
+            "score"      : 0,
+            "status"     : "partial",
+            "tried"      : [],
+            "suggestion" : person.get("linkedin_url") or None,
+            "title_tier" : person.get("title_tier", 1),
+        }
+
+    # Enrich all people concurrently — was sequential (10 × 90s = 15 min)
+    contacts: list[dict] = await asyncio.gather(*[_safe_enrich(p) for p in people])
 
     verified = sum(1 for c in contacts if c["status"] == "verified")
     partial  = sum(1 for c in contacts if c["status"] == "partial")

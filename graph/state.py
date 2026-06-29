@@ -35,6 +35,7 @@ class PersonData(TypedDict):
     name         : str
     title        : str
     title_score  : float
+    title_tier   : int          # 1 = C-suite/VP (Level 1), 2 = Director/Manager fallback
     company      : str
     linkedin_url : str
     email        : str | None
@@ -60,6 +61,7 @@ class LeadScore(TypedDict):
 class ContactData(TypedDict):
     name       : str
     title      : str
+    title_tier : int          # 1 = C-suite/VP (Level 1), 2 = Director/Manager fallback
     company    : str
     email      : str | None
     confidence : int

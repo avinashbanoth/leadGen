@@ -8,19 +8,20 @@ from tools.crosslinked_tool import get_email_permutations
 
 logger = logging.getLogger(__name__)
 
-_SMTP_TIMEOUT = 5   # seconds
+_SMTP_TIMEOUT = 3     # seconds per TCP op
+_SMTP_WALL    = 4.0   # hard wall per candidate (catches getfqdn hangs)
 
 
 async def _smtp_verify(email: str) -> bool:
     """
     Checks if an email address likely exists via SMTP RCPT TO handshake.
-    Does NOT send any message — just checks if the mailbox is accepted.
-    Many servers block this (greylisting, catch-all) — treat result as a hint, not a guarantee.
+    Hard-capped at _SMTP_WALL seconds to prevent getfqdn / port-25 hangs.
     """
     domain = email.split("@")[-1]
 
     def _check() -> bool:
         try:
+            # Resolve MX via getfqdn — can hang; killed by wait_for below
             mx = socket.getfqdn(domain)
             with smtplib.SMTP(timeout=_SMTP_TIMEOUT) as smtp:
                 smtp.connect(mx, 25)
@@ -32,8 +33,8 @@ async def _smtp_verify(email: str) -> bool:
             return False
 
     try:
-        return await asyncio.to_thread(_check)
-    except Exception:
+        return await asyncio.wait_for(asyncio.to_thread(_check), timeout=_SMTP_WALL)
+    except (asyncio.TimeoutError, Exception):
         return False
 
 
@@ -55,8 +56,8 @@ class PermutatorProvider(EmailProvider):
             "company_domain": domain,
         })
 
-        # Try SMTP verification on each candidate
-        for candidate in candidates:
+        # Try SMTP verification on top 4 candidates only — avoids 15 × 4s wall time
+        for candidate in candidates[:4]:
             valid = await _smtp_verify(candidate)
             if valid:
                 logger.info("Permutator: SMTP verified %s", candidate)
