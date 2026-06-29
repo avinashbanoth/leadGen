@@ -12,7 +12,7 @@ server:
   bind_address: "0.0.0.0"
 
 search:
-  safe_search: 0
+  safe_search: 2
   default_lang: "en"
   formats:
     - html
@@ -31,3 +31,11 @@ engines:
     engine: duckduckgo
     shortcut: d
     disabled: false
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+  - name: qwant
+    engine: qwant
+    shortcut: qw
+    disabled: true
