@@ -493,9 +493,10 @@
     // ----- Main App -----
 
     const EXAMPLES = [
-      'Find CTOs at Series B SaaS companies in the US that use React',
-      'VP Engineering contacts at UK fintech startups with 50-200 employees',
-      'Founders of AI startups that raised Series A in 2024',
+      'Who is the CTO at Freshworks',
+      'Find pharma companies in Hyderabad',
+      'HR heads at logistics companies in Germany with 200+ employees',
+      'Founders of SaaS startups in Bangalore using AWS',
     ];
 
     function App() {
@@ -648,7 +649,7 @@
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 8, color: '#8b949e', textAlign: 'center', padding: 40 }}>
                     <div style={{ fontSize: 40, color: '#30363d', marginBottom: 4 }}>◉</div>
                     <div style={{ fontSize: 18, fontWeight: 600, color: '#c9d1d9' }}>Lead Gen Agent</div>
-                    <div style={{ fontSize: 13 }}>Find B2B decision makers at any company. Try:</div>
+                    <div style={{ fontSize: 13 }}>Find decision makers at any company. Role is optional — defaults to Founder / CEO / MD. Try:</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, width: '100%', maxWidth: 420 }}>
                       {EXAMPLES.map((ex, i) => (
                         <div key={i} className="example-chip"
@@ -683,7 +684,7 @@
                   onChange={e => setQuery(e.target.value)}
                   onKeyDown={onKey}
                   disabled={loading}
-                  placeholder="Find CTOs at fintech startups in Germany..."
+                  placeholder="e.g. Who is the CTO at Freshworks  —  or  Find pharma companies in Hyderabad"
                   rows={2}
                   style={{
                     flex: 1, background: '#161b22', border: '1px solid #30363d',

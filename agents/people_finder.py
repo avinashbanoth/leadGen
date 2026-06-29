@@ -243,8 +243,12 @@ async def people_finder(state: GraphState) -> dict:
     target_role = query_plan.get("target_role") or ""
 
     if not companies:
-        errors.append("people_finder: no companies in state — skipping.")
-        return {"people": [], "errors": errors}
+        named = query_plan.get("named_company")
+        if query_plan.get("company_named_directly") and named:
+            companies = [{"name": named, "website": "", "confidence": 1.0}]
+        else:
+            errors.append("people_finder: no companies in state — skipping.")
+            return {"people": [], "errors": errors}
 
     if not target_role:
         errors.append("people_finder: no target_role in query_plan — skipping.")
