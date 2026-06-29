@@ -18,8 +18,12 @@ _PATTERNS = [
     "{f}.{last}",
 ]
 
-# LinkedIn result titles follow: "Name - Title at Company | LinkedIn"
-_NAME_RE = re.compile(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*[-–|]", re.UNICODE)
+# LinkedIn result titles: "Name - Title at Company | LinkedIn"
+# Handles accented chars (María), hyphenated names (Mary-Jane), initials (John A. Smith)
+_NAME_RE = re.compile(
+    r"^([\w][\w'\-\.]*(?:\s+[\w][\w'\-\.]*)+)\s*[-–|]",
+    re.UNICODE,
+)
 
 
 # ---------------------------------------------------------------------------

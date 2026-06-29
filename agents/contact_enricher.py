@@ -6,29 +6,29 @@ from providers.hunter_provider import HunterProvider
 from providers.permutator_provider import PermutatorProvider
 from providers.harvester_provider import HarvesterProvider
 from providers.google_dork_provider import GoogleDorkProvider
-from providers.linkedin_contact_provider import LinkedInContactProvider
 from providers.website_contact_provider import WebsiteContactProvider
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Provider chain — tried in order, stops at the first verified result
-# ---------------------------------------------------------------------------
+_MIN_CONFIDENCE = 30
 
-_PROVIDERS = [
-    HunterProvider(),
-    PermutatorProvider(),
-    HarvesterProvider(),
-    GoogleDorkProvider(),
-    LinkedInContactProvider(),
-    WebsiteContactProvider(),
-]
 
-_MIN_CONFIDENCE = 30   # below this, keep trying next provider
+def _make_providers() -> list:
+    """
+    Returns a fresh list of provider instances per enrichment call.
+    Avoids shared-singleton state corruption when multiple people are
+    enriched concurrently via asyncio.gather.
+    """
+    return [
+        HunterProvider(),
+        PermutatorProvider(),
+        HarvesterProvider(),
+        GoogleDorkProvider(),
+        WebsiteContactProvider(),
+    ]
 
 
 def _domain_from_company(companies: list[dict], company_name: str) -> str:
-    """Finds the company domain from the companies list by matching name."""
     for c in companies:
         if c.get("name", "").lower() == company_name.lower():
             website = c.get("website", "")
@@ -46,8 +46,9 @@ def _split_name(full_name: str) -> tuple[str, str]:
 
 async def _enrich_person(person: dict, companies: list[dict], lead_scores: list[dict]) -> dict:
     """
-    Runs the 6-level provider chain for a single person.
-    Returns a ContactData-shaped dict — never returns None, never silent-fails.
+    Runs the 5-level provider chain for a single person.
+    Fresh providers are created per call — no shared mutable state.
+    Returns a ContactData-shaped dict — never None, never silent-fail.
     """
     full_name = person.get("name", "")
     title     = person.get("title", "")
@@ -57,7 +58,6 @@ async def _enrich_person(person: dict, companies: list[dict], lead_scores: list[
     first, last = _split_name(full_name)
     domain      = _domain_from_company(companies, company)
 
-    # Find the lead score for this person
     score = 0
     for ls in lead_scores:
         if ls.get("person", "").lower() == full_name.lower():
@@ -69,30 +69,32 @@ async def _enrich_person(person: dict, companies: list[dict], lead_scores: list[
     confidence: int   = 0
     source: str       = ""
 
-    for provider in _PROVIDERS:
-        tried.append(provider.name)
+    # If Apollo already returned a verified email, use it immediately
+    apollo_email = person.get("email")
+    if apollo_email:
+        email      = apollo_email
+        confidence = 80
+        source     = "apollo"
+        tried      = ["apollo"]
+    else:
+        for provider in _make_providers():
+            tried.append(provider.name)
+            try:
+                result = await provider.find(first, last, domain)
+            except Exception as e:
+                logger.warning("contact_enricher: provider '%s' raised — %s", provider.name, e)
+                continue
 
-        # LinkedInContactProvider needs the profile URL injected
-        if hasattr(provider, "_linkedin_url"):
-            provider._linkedin_url = linkedin
+            if result.get("email") and result.get("confidence", 0) >= _MIN_CONFIDENCE:
+                email      = result["email"]
+                confidence = result["confidence"]
+                source     = result["source"]
+                logger.info(
+                    "contact_enricher: email for '%s' via %s (confidence=%d).",
+                    full_name, provider.name, confidence,
+                )
+                break
 
-        try:
-            result = await provider.find(first, last, domain)
-        except Exception as e:
-            logger.warning("contact_enricher: provider '%s' raised — %s", provider.name, e)
-            continue
-
-        if result.get("email") and result.get("confidence", 0) >= _MIN_CONFIDENCE:
-            email      = result["email"]
-            confidence = result["confidence"]
-            source     = result["source"]
-            logger.info(
-                "contact_enricher: email found for '%s' via %s (confidence=%d).",
-                full_name, provider.name, confidence,
-            )
-            break
-
-    # Determine status
     if email and confidence >= 70:
         status = "verified"
     elif email:
@@ -124,36 +126,36 @@ async def _enrich_person(person: dict, companies: list[dict], lead_scores: list[
 
 async def contact_enricher(state: GraphState) -> dict:
     """
-    Contact Enricher Agent — for every person in GraphState, walks the 6-level
-    EmailProvider chain (Hunter → Permutator → Harvester → GoogleDork → LinkedIn → Website)
+    Contact Enricher Agent — for every person in GraphState, walks the 5-level
+    EmailProvider chain (Hunter → Permutator → Harvester → GoogleDork → Website)
     and stops at the first result with confidence ≥ 30.
-    Status is 'verified' (≥70), 'partial' (<70), or 'not_found'.
-    Partial results always include a suggestion (LinkedIn URL) rather than failing silently.
+    If Apollo already provided a verified email, skips the chain entirely.
+    Status: 'verified' (≥70%), 'partial' (<70%), or 'not_found'.
+    Partial results always include a suggestion (LinkedIn URL).
     Writes list[ContactData] to GraphState. Never raises.
     """
-    errors     = list(state.get("errors", []))
-    people     = state.get("people", [])
-    companies  = state.get("companies", [])
+    errors      = list(state.get("errors", []))
+    people      = state.get("people", [])
+    companies   = state.get("companies", [])
     lead_scores = state.get("lead_score", [])
 
     if not people:
         errors.append("contact_enricher: no people in state — skipping.")
         return {"contacts": [], "errors": errors}
 
-    # Sort people by lead score (highest first), then cap to conserve quota.
-    # Default cap = 5; callers that need more can expand the people list before this node.
     _MAX_ENRICH = 5
     if lead_scores:
         score_map = {ls.get("person", "").lower(): ls.get("score", 0) for ls in lead_scores}
         people = sorted(people, key=lambda p: score_map.get(p.get("name", "").lower(), 0), reverse=True)
     people = people[:_MAX_ENRICH]
+
     if len(people) < len(state.get("people", [])):
         logger.info(
-            "contact_enricher: capped enrichment to top %d of %d people (quota conservation).",
+            "contact_enricher: capped to top %d of %d people (quota conservation).",
             len(people), len(state.get("people", [])),
         )
 
-    _PER_PERSON_TIMEOUT = 25.0   # max seconds per person across all 6 providers
+    _PER_PERSON_TIMEOUT = 30.0
 
     async def _safe_enrich(person: dict) -> dict:
         name = person.get("name", "unknown")
@@ -163,10 +165,9 @@ async def contact_enricher(state: GraphState) -> dict:
                 timeout=_PER_PERSON_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            errors.append(f"contact_enricher: timed out for '{name}' after {_PER_PERSON_TIMEOUT}s")
+            errors.append(f"contact_enricher: timed out for '{name}'")
         except Exception as e:
             errors.append(f"contact_enricher: failed for '{name}' — {e}")
-        # Partial result rather than silent failure (Rule 9)
         return {
             "name"       : name,
             "title"      : person.get("title", ""),
@@ -182,7 +183,6 @@ async def contact_enricher(state: GraphState) -> dict:
             "title_tier" : person.get("title_tier", 1),
         }
 
-    # Enrich all people concurrently — was sequential (10 × 90s = 15 min)
     contacts: list[dict] = await asyncio.gather(*[_safe_enrich(p) for p in people])
 
     verified = sum(1 for c in contacts if c["status"] == "verified")
@@ -193,7 +193,7 @@ async def contact_enricher(state: GraphState) -> dict:
     )
 
     return {
-        "contacts": contacts,
+        "contacts": list(contacts),
         "errors"  : errors,
         "status"  : "enrichment_complete",
     }
