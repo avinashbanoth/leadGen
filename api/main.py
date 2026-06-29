@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 load_dotenv()   # must run before any LLM or tool imports that read .env
 
-from graph.orchestrator import app_graph   # noqa: E402 — load_dotenv must precede this
+from graph.orchestrator import app_graph    # noqa: E402 — load_dotenv must precede this
+from utils.api_tracker import tracker       # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -111,6 +112,12 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/credits")
+async def get_credits():
+    """Live API key status — Groq key hint + query count, Hunter credits, Apollo health."""
+    return await tracker.status()
+
+
 @app.get("/stats", response_model=UsageResponse)
 async def get_stats():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -137,6 +144,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
 
     logger.info("Received query: %s", request.query)
+    tracker.record_query()
     t0 = time.monotonic()
 
     initial_state = {
@@ -159,6 +167,13 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Pipeline error: {e}")
 
     elapsed  = round(time.monotonic() - t0, 2)
+
+    # Surface any Groq rate-limit errors to the tracker
+    for err in final_state.get("errors", []):
+        if "429" in err or "rate_limit" in err.lower() or "tpd" in err.lower():
+            tracker.record_error(err)
+            break
+
     messages = final_state.get("messages", [])
     message  = messages[-1] if messages else "No response generated."
     status   = final_state.get("status", "unknown")

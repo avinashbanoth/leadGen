@@ -7,6 +7,9 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Tailwind CDN — preflight disabled so it doesn't conflict with existing base CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { corePlugins: { preflight: false } }</script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; }
@@ -252,9 +255,128 @@
       );
     }
 
+    // ----- API Credits section -----
+
+    function KeyBadge({ hint, configured }) {
+      if (!configured) return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono"
+          style={{ background: '#f8514922', color: '#f85149', border: '1px solid #f8514944' }}>
+          not set
+        </span>
+      );
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono"
+          style={{ background: '#3fb95018', color: '#3fb950', border: '1px solid #3fb95033' }}>
+          {hint}
+        </span>
+      );
+    }
+
+    function MiniBar({ pct, warn }) {
+      const color = pct > 80 ? '#f85149' : pct > 50 ? '#d29922' : '#3fb950';
+      return (
+        <div className="w-full rounded-full overflow-hidden" style={{ height: 3, background: '#21262d' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2, transition: 'width 0.4s ease' }} />
+        </div>
+      );
+    }
+
+    function StatusDot({ active, label }) {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs"
+          style={{ color: active ? '#3fb950' : '#f85149' }}>
+          <span style={{
+            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+            background: active ? '#3fb950' : '#f85149',
+          }} />
+          {label}
+        </span>
+      );
+    }
+
+    function CreditsSection({ credits, lastRefreshed }) {
+      if (!credits) return (
+        <div className="pb-3 mb-3" style={{ borderBottom: '1px solid #21262d' }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600, marginBottom: 10 }}>
+            API CREDITS
+          </div>
+          <div style={{ fontSize: 11, color: '#8b949e' }}>Loading…</div>
+        </div>
+      );
+
+      const { groq = {}, hunter = {}, apollo = {} } = credits;
+      const hunterUsed  = hunter.used      ?? 0;
+      const hunterAvail = hunter.available ?? 50;
+      const hunterPct   = Math.min(100, Math.round((hunterUsed / hunterAvail) * 100));
+      const refreshLabel = lastRefreshed
+        ? `Updated ${lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        : '';
+
+      return (
+        <div className="pb-3 mb-3" style={{ borderBottom: '1px solid #21262d' }}>
+          {/* Section header */}
+          <div className="flex items-center justify-between mb-2">
+            <span style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600 }}>
+              API CREDITS
+            </span>
+            {refreshLabel && (
+              <span style={{ fontSize: 10, color: '#484f58' }}>{refreshLabel}</span>
+            )}
+          </div>
+
+          {/* ── Groq ── */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-1">
+              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Groq</span>
+              <KeyBadge hint={groq.key_hint} configured={groq.configured} />
+            </div>
+            <div className="flex justify-between items-center">
+              <span style={{ fontSize: 11, color: '#8b949e' }}>Queries this key</span>
+              <span style={{ fontSize: 11, color: '#c9d1d9', fontWeight: 600 }}>{groq.queries ?? 0}</span>
+            </div>
+            {groq.errors > 0 && (
+              <div className="flex items-center gap-1 mt-1"
+                style={{ fontSize: 11, color: '#f85149', background: '#f8514910', borderRadius: 4, padding: '3px 6px' }}>
+                <span>⚠</span>
+                <span>{groq.errors} rate limit hit{groq.errors !== 1 ? 's' : ''}</span>
+              </div>
+            )}
+          </div>
+
+          {/* ── Hunter ── */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-1">
+              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Hunter</span>
+              {hunter.configured
+                ? <span style={{ fontSize: 11, color: '#c9d1d9' }}>{hunterUsed} / {hunterAvail}</span>
+                : <StatusDot active={false} label="not set" />}
+            </div>
+            {hunter.configured && (
+              <>
+                <MiniBar pct={hunterPct} />
+                <div style={{ fontSize: 10, color: '#484f58', marginTop: 3 }}>
+                  {hunterAvail - hunterUsed} searches remaining
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── Apollo ── */}
+          <div>
+            <div className="flex items-center justify-between">
+              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Apollo</span>
+              {apollo.configured
+                ? <StatusDot active={apollo.active} label={apollo.active ? 'active' : 'inactive'} />
+                : <StatusDot active={false} label="not set" />}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // ----- Stats sidebar -----
 
-    function StatsPanel({ stats, lastMsg, nextEst }) {
+    function StatsPanel({ stats, lastMsg, nextEst, credits, creditsRefreshed }) {
       const [countdown, setCountdown] = useState('');
 
       useEffect(() => {
@@ -281,6 +403,9 @@
           overflowY: 'auto', padding: '16px 14px', flexShrink: 0,
           display: 'flex', flexDirection: 'column', gap: 0,
         }}>
+          {/* API Credits */}
+          <CreditsSection credits={credits} lastRefreshed={creditsRefreshed} />
+
           {/* Token usage */}
           <Section title="TOKEN USAGE — TODAY">
             <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
@@ -374,14 +499,16 @@
     ];
 
     function App() {
-      const [messages, setMessages]   = useState([]);
-      const [query, setQuery]         = useState('');
-      const [loading, setLoading]     = useState(false);
-      const [elapsed, setElapsed]     = useState(0);
-      const [serverUp, setServerUp]   = useState(false);
-      const [stats, setStats]         = useState(null);
-      const [lastMsg, setLastMsg]     = useState(null);
-      const [nextEst, setNextEst]     = useState(null);
+      const [messages, setMessages]         = useState([]);
+      const [query, setQuery]               = useState('');
+      const [loading, setLoading]           = useState(false);
+      const [elapsed, setElapsed]           = useState(0);
+      const [serverUp, setServerUp]         = useState(false);
+      const [stats, setStats]               = useState(null);
+      const [lastMsg, setLastMsg]           = useState(null);
+      const [nextEst, setNextEst]           = useState(null);
+      const [credits, setCredits]           = useState(null);
+      const [creditsRefreshed, setCreditsRefreshed] = useState(null);
       const bottomRef  = useRef(null);
       const timerRef   = useRef(null);
       const startRef   = useRef(null);
@@ -409,6 +536,23 @@
         const id = setInterval(fetchStats, 60000);
         return () => clearInterval(id);
       }, [fetchStats]);
+
+      // Credits polling — every 30 s; also called after each chat response
+      const fetchCredits = useCallback(async () => {
+        try {
+          const r = await fetch(`${BASE}/api/credits`);
+          if (r.ok) {
+            setCredits(await r.json());
+            setCreditsRefreshed(new Date());
+          }
+        } catch {}
+      }, []);
+
+      useEffect(() => {
+        fetchCredits();
+        const id = setInterval(fetchCredits, 30000);
+        return () => clearInterval(id);
+      }, [fetchCredits]);
 
       // Scroll to bottom
       useEffect(() => {
@@ -453,6 +597,7 @@
           setMessages(prev => [...prev, msg]);
           setLastMsg(msg);
           fetchStats();
+          fetchCredits();
         } catch (err) {
           const el = (Date.now() - startRef.current) / 1000;
           const msg = {
@@ -563,7 +708,8 @@
             </div>
 
             {/* Stats sidebar */}
-            <StatsPanel stats={stats} lastMsg={lastMsg} nextEst={nextEst} />
+            <StatsPanel stats={stats} lastMsg={lastMsg} nextEst={nextEst}
+              credits={credits} creditsRefreshed={creditsRefreshed} />
           </div>
         </div>
       );
