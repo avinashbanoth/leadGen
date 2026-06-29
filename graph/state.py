@@ -11,14 +11,16 @@ class CompanyFilters(TypedDict):
 
 
 class QueryPlan(TypedDict):
-    is_lead_gen_query   : bool
-    needs_clarification : bool
-    clarification_ask   : str | None
-    rejection_reason    : str | None
-    company_filters     : CompanyFilters | None
-    signal_hints        : list[str]
-    target_role         : str | None
-    agents_needed       : list[str]
+    is_lead_gen_query      : bool
+    needs_clarification    : bool
+    clarification_ask      : str | None
+    rejection_reason       : str | None
+    company_filters        : CompanyFilters | None
+    signal_hints           : list[str]
+    target_role            : str | None
+    agents_needed          : list[str]
+    company_named_directly : bool       # True → skip company_search, go straight to people_finder
+    named_company          : str | None # the exact company name when company_named_directly=True
 
 
 class CompanyData(TypedDict):

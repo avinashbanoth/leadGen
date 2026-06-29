@@ -643,12 +643,48 @@ async def company_search(state: GraphState) -> dict:
                extracts company names using the LLM.
       Phase 2: For each extracted name, searches directly for the company's homepage,
                verifies it with Crawl4AI, checks location presence, and infers industry.
-    Falls back to direct keyword search if Phase 1 yields no names.
+    Short-circuit: if query_plan.company_named_directly=True, uses Apollo to look up
+    the named company directly and skips the full discovery flow.
     Writes list[CompanyData] to GraphState. Never raises.
     """
     errors = list(state.get("errors", []))
     original_query = state.get("query", "")
     query_plan = state.get("query_plan", {})
+
+    # ── Named-company short-circuit (Rule 10) ────────────────────────────────
+    if query_plan.get("company_named_directly") and query_plan.get("named_company"):
+        from tools.apollo_tool import search_apollo_company
+        named = query_plan["named_company"]
+        logger.info("company_search: named-company short-circuit for '%s'", named)
+        try:
+            apollo_result = await search_apollo_company.ainvoke({"company_name": named})
+        except Exception as e:
+            apollo_result = {}
+            errors.append(f"company_search: Apollo lookup failed for '{named}' — {e}")
+
+        if apollo_result:
+            return {"companies": [apollo_result], "errors": errors}
+
+        # Apollo found nothing — fall back to direct domain construction
+        try:
+            criteria_str = f"company: {named}"
+            result = await asyncio.wait_for(
+                _find_homepage(named, criteria_str, set(), skip_location_check=True),
+                timeout=30.0,
+            )
+            companies = [result] if result else []
+        except Exception as e:
+            companies = []
+            errors.append(f"company_search: homepage fallback failed for '{named}' — {e}")
+
+        if not companies:
+            errors.append(f"company_search: could not resolve '{named}' — returning stub.")
+            companies = [{
+                "name": named, "website": "", "industry": "",
+                "revenue": "", "confidence": 0.5, "tech_stack": [], "source": "stub",
+            }]
+        return {"companies": companies, "errors": errors}
+    # ── End short-circuit ────────────────────────────────────────────────────
     company_filters = query_plan.get("company_filters") or {}
     criteria_str = _build_criteria_str(company_filters)
 

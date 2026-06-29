@@ -20,14 +20,16 @@ class CompanyFiltersModel(BaseModel):
 
 
 class QueryPlanModel(BaseModel):
-    is_lead_gen_query   : bool                  = Field(..., description="True if this is a valid business lead generation request")
-    needs_clarification : bool                  = Field(..., description="True if the query is valid but too vague to act on")
-    clarification_ask   : str | None            = Field(None, description="Question to ask the user when needs_clarification is True")
-    rejection_reason    : str | None            = Field(None, description="Polite explanation when is_lead_gen_query is False")
-    company_filters     : CompanyFiltersModel | None = Field(None, description="Structured company search criteria")
-    signal_hints        : list[str]             = Field(default_factory=list, description="Behavioral signals to look for e.g. ['hiring devops', 'cloud cost issues']")
-    target_role         : str | None            = Field(None, description="Decision maker role to find e.g. 'CTO', 'VP Engineering', 'HR Head'")
-    agents_needed       : list[str]             = Field(default_factory=list, description="Agents to activate: any of ['company_search', 'signal_filter', 'people_finder']")
+    is_lead_gen_query      : bool                       = Field(..., description="True if this is a valid business lead generation request")
+    needs_clarification    : bool                       = Field(..., description="True if the query is valid but too vague to act on")
+    clarification_ask      : str | None                 = Field(None, description="Question to ask the user when needs_clarification is True")
+    rejection_reason       : str | None                 = Field(None, description="Polite explanation when is_lead_gen_query is False")
+    company_filters        : CompanyFiltersModel | None = Field(None, description="Structured company search criteria")
+    signal_hints           : list[str]                  = Field(default_factory=list, description="Behavioral signals to look for e.g. ['hiring devops', 'cloud cost issues']")
+    target_role            : str | None                 = Field(None, description="Decision maker role to find e.g. 'CTO', 'VP Engineering', 'HR Head'")
+    agents_needed          : list[str]                  = Field(default_factory=list, description="Agents to activate: any of ['company_search', 'signal_filter', 'people_finder']")
+    company_named_directly : bool                       = Field(False, description="True when the user names a specific company (e.g. 'Find CTO at Razorpay'). Skips company discovery.")
+    named_company          : str | None                 = Field(None, description="The exact company name when company_named_directly is True")
 
     @field_validator("signal_hints", "agents_needed", mode="before")
     @classmethod
@@ -108,16 +110,19 @@ Example: If the user says "find startup contacts", set clarification_ask to:
 - Location (e.g. Bangalore, Germany, US)
 Try: \"Find CTOs at fintech startups in Bangalore\""
 
+## company_named_directly
+Set company_named_directly=True when the user names a SPECIFIC company (e.g. "Find CTO at Razorpay",
+"Who leads engineering at Stripe", "Get me the VP Sales at SAP").
+Set named_company to the exact company name in those cases.
+When company_named_directly=True, set agents_needed=["people_finder"] only — company_search is skipped.
+
 ## agents_needed rules
-When needs_clarification is false, always include BOTH of:
-- "company_search" — finds and verifies companies so people_finder has domains to work with.
-  Even when a company is named directly ("Razorpay"), company_search must still run to populate
-  company state with domain, confidence, and metadata.
-- "people_finder" — finds the decision makers. This system always finds people.
+When needs_clarification is false:
+- If company_named_directly=True: agents_needed = ["people_finder"] (company_search skipped)
+- Otherwise: always include BOTH "company_search" AND "people_finder"
 Also include "signal_filter" when the query mentions a behavioral signal (hiring, cloud costs,
 recent funding, struggling with something).
-Result: almost every valid query has agents_needed = ["company_search", "people_finder"] or
-["company_search", "signal_filter", "people_finder"].
+Result: named-company queries → ["people_finder"]; category queries → ["company_search", "people_finder"].
 
 ## signal_hints
 Extract implied behavioral signals from the query:
@@ -185,14 +190,16 @@ async def query_parser(state: GraphState) -> dict:
                 raise
 
         query_plan = {
-            "is_lead_gen_query"  : result.is_lead_gen_query,
-            "needs_clarification": result.needs_clarification,
-            "clarification_ask"  : result.clarification_ask,
-            "rejection_reason"   : result.rejection_reason,
-            "company_filters"    : result.company_filters.model_dump() if result.company_filters else None,
-            "signal_hints"       : result.signal_hints,
-            "target_role"        : result.target_role,
-            "agents_needed"      : result.agents_needed,
+            "is_lead_gen_query"      : result.is_lead_gen_query,
+            "needs_clarification"    : result.needs_clarification,
+            "clarification_ask"      : result.clarification_ask,
+            "rejection_reason"       : result.rejection_reason,
+            "company_filters"        : result.company_filters.model_dump() if result.company_filters else None,
+            "signal_hints"           : result.signal_hints,
+            "target_role"            : result.target_role,
+            "agents_needed"          : result.agents_needed,
+            "company_named_directly" : result.company_named_directly,
+            "named_company"          : result.named_company,
         }
 
     except Exception as e:
