@@ -75,7 +75,7 @@ class APITracker:
         if not key:
             return {"configured": False}
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(_HUNTER_URL, params={"api_key": key})
                 data = r.json()
             searches = data.get("data", {}).get("requests", {}).get("searches", {})
@@ -94,7 +94,7 @@ class APITracker:
         if not key:
             return {"configured": False}
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 r = await client.get(_APOLLO_URL, params={"api_key": key})
                 data = r.json()
             return {
@@ -110,9 +110,14 @@ class APITracker:
     # ------------------------------------------------------------------
 
     async def status(self) -> dict:
-        key    = self._refresh()
-        hunter = await self._hunter_credits()
-        apollo = await self._apollo_status()
+        import asyncio
+        key = self._refresh()
+        # Run Hunter + Apollo concurrently — each has an 8s timeout; sequential = 16s worst case
+        hunter, apollo = await asyncio.gather(
+            self._hunter_credits(),
+            self._apollo_status(),
+            return_exceptions=False,
+        )
         return {
             "groq": {
                 "configured" : bool(key),
