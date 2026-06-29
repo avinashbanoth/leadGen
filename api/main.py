@@ -54,6 +54,7 @@ class ChatResponse(BaseModel):
     message         : str
     status          : str
     contacts        : list[dict] = []
+    companies       : list[dict] = []
     stats           : dict       = {}
     errors          : list[str]  = []
     result_json     : str        = ""
@@ -162,6 +163,7 @@ async def chat(request: ChatRequest):
     message  = messages[-1] if messages else "No response generated."
     status   = final_state.get("status", "unknown")
     contacts = final_state.get("contacts", [])
+    companies = final_state.get("companies", [])
     errors   = final_state.get("errors", [])
     result_json = final_state.get("result_json", "")
 
@@ -178,6 +180,7 @@ async def chat(request: ChatRequest):
         message         =message,
         status          =status,
         contacts        =contacts,
+        companies       =companies,
         stats           =stats,
         errors          =errors,
         result_json     =result_json,

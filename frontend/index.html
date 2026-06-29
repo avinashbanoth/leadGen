@@ -82,38 +82,92 @@
       );
     }
 
-    function ContactsTable({ contacts }) {
-      if (!contacts || contacts.length === 0) return null;
+    function CompanyTable({ companies, contacts }) {
+      const hasCompanies = companies && companies.length > 0;
+      const hasContacts  = contacts  && contacts.length  > 0;
+      if (!hasCompanies && !hasContacts) return null;
+
+      // Build contact map: company name (lowercase) → contacts sorted by score desc
+      const contactMap = {};
+      (contacts || []).forEach(c => {
+        const key = (c.company || '').toLowerCase().trim();
+        if (!contactMap[key]) contactMap[key] = [];
+        contactMap[key].push(c);
+      });
+      Object.values(contactMap).forEach(arr =>
+        arr.sort((a, b) => (b.score || 0) - (a.score || 0))
+      );
+
+      // One row per discovered company
+      const rows = (companies || []).map(co => ({
+        co,
+        contact: (contactMap[(co.name || '').toLowerCase().trim()] || [])[0] || null,
+      }));
+
+      // Add contacts whose company didn't appear in the companies list (edge case)
+      const knownNames = new Set((companies || []).map(c => (c.name || '').toLowerCase().trim()));
+      Object.entries(contactMap).forEach(([key, cts]) => {
+        if (!knownNames.has(key)) {
+          rows.push({ co: { name: cts[0].company || key, website: '', industry: '' }, contact: cts[0] });
+        }
+      });
+
+      const COLS = ['#', 'Company', 'Industry', 'Website', 'Contact Name', 'Title', 'Email', 'Confidence'];
+
       return (
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 11, color: '#8b949e', fontWeight: 600, letterSpacing: '0.06em', marginBottom: 8 }}>
-            CONTACTS FOUND
+            RESULTS — {rows.length} COMPAN{rows.length === 1 ? 'Y' : 'IES'}
           </div>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 500 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
               <thead>
                 <tr>
-                  {['Name', 'Company', 'Title', 'Email', 'Status'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '5px 8px', color: '#8b949e', borderBottom: '1px solid #30363d', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      {h}
-                    </th>
+                  {COLS.map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '5px 8px', color: '#8b949e',
+                      borderBottom: '1px solid #30363d', fontWeight: 500, whiteSpace: 'nowrap',
+                    }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {contacts.map((c, i) => (
-                  <tr key={i} style={{ background: i % 2 ? '#ffffff06' : 'transparent' }}>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>{c.name || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>{c.company || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{c.title || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>{c.email || '—'}</td>
-                    <td style={{ padding: '5px 8px', borderBottom: '1px solid #21262d' }}>
-                      <span style={{ color: c.status === 'verified' ? '#3fb950' : c.status === 'partial' ? '#d29922' : '#8b949e', fontSize: 11 }}>
-                        {c.status || '—'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map(({ co, contact }, i) => {
+                  const conf   = contact?.confidence;
+                  const status = contact?.status;
+                  const emailColor = status === 'verified' ? '#3fb950' : '#d29922';
+                  const confColor  = conf >= 70 ? '#3fb950' : conf >= 30 ? '#d29922' : '#8b949e';
+                  const site = (co.website || '').replace(/^https?:\/\/(www\.)?/, '');
+                  return (
+                    <tr key={i} style={{ background: i % 2 ? '#ffffff06' : 'transparent' }}>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{i + 1}</td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                        {co.name || '—'}
+                      </td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>
+                        {co.industry || '—'}
+                      </td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>
+                        {site ? (
+                          <a href={co.website} target="_blank" rel="noopener noreferrer"
+                            style={{ color: '#58a6ff', textDecoration: 'none' }}>{site}</a>
+                        ) : '—'}
+                      </td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d' }}>{contact?.name || '—'}</td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{contact?.title || '—'}</td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>
+                        {contact?.email
+                          ? <span style={{ color: emailColor }}>{contact.email}</span>
+                          : '—'}
+                      </td>
+                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d' }}>
+                        {conf != null && conf > 0
+                          ? <span style={{ color: confColor }}>{conf}%</span>
+                          : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -139,7 +193,7 @@
               )}
             </div>
             <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{msg.content}</div>
-            <ContactsTable contacts={msg.contacts} />
+            <CompanyTable companies={msg.companies} contacts={msg.contacts} />
             {msg.errors && msg.errors.length > 0 && (
               <div style={{ marginTop: 10 }}>
                 <button className="err-toggle" onClick={() => setShowErr(v => !v)}
@@ -390,8 +444,9 @@
             role            : 'assistant',
             content         : data.message,
             status          : data.status,
-            contacts        : data.contacts || [],
-            errors          : data.errors   || [],
+            contacts        : data.contacts  || [],
+            companies       : data.companies || [],
+            errors          : data.errors    || [],
             elapsed         : data.elapsed_seconds || el,
             estimated_tokens: data.estimated_tokens || 0,
           };
