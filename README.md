@@ -10,33 +10,34 @@ A generic multi-agent system that takes any natural language B2B lead generation
 User Query
     │
     ▼
-Query Parser        → extracts QueryPlan (industry, role, signals, agents needed)
+Query Parser        → extracts QueryPlan (industry, role, company, signals)
     │
     ▼
 Guard Router        → rejects non-lead-gen · asks clarification if vague · proceeds if valid
     │
     ▼
-[Company Search | Signal Filter | People Finder]   → run in parallel based on QueryPlan
+Company Search      → two-phase discovery (directories → SearXNG → direct domains)
+    │               → short-circuits to Apollo if a specific company is named
+    ▼
+People Finder       → Apollo (Layer A) → website team pages (Layer B) → Google dorks (Layer C)
+    │               → two-tier role priority: C-suite first, Director/Manager fallback
+    ▼
+Lead Scoring        → Groq 70b ranks leads 0–100 with reasons (no tools, reads GraphState only)
     │
     ▼
-Lead Scoring        → ranks (company, person) pairs 0–100 with reasons
+Contact Enricher    → Hunter → Permutator (MX verified) → Harvester → Dork → Website
     │
     ▼
-Contact Enricher    → 6-level email chain: Hunter → Permutator → Harvester → Dork → LinkedIn → Website
-    │
-    ▼
-Result Formatter    → chat message + structured JSON + stats
+Result Formatter    → chat message grouped by company + structured JSON + stats
 ```
 
-### LinkedIn 4-Layer Fallback
-| Layer | Tool | Method |
-|---|---|---|
-| 1 | `linkedin-api` | Voyager HTTP (cookie auth) |
-| 2 | `linkedin_scraper` + Camoufox | Stealth browser |
-| 3 | `browser-use` + Groq | LLM-driven browser, no selectors |
-| 4 | Crosslinked | Google dorks, no login required |
+### People Finding — Three Layers
 
-Each layer falls back to the next on failure (ChallengeException, empty results, etc.).
+| Layer | Tool | Coverage |
+|---|---|---|
+| A | Apollo.io People Search | 270M+ professionals — large + mid-market companies globally |
+| B | Website team page scraper | Any company with a /team or /about page — SMEs, European companies |
+| C | Google dorks via SearXNG | Large companies with indexed LinkedIn profiles — last resort |
 
 ---
 
@@ -49,22 +50,22 @@ Each layer falls back to the next on failure (ChallengeException, empty results,
 | API | FastAPI |
 | Data Models | Pydantic v2 |
 | Language | Python 3.11+ |
-| Web Search | SearXNG (self-hosted Docker) |
+| LLM (all nodes) | Groq — `llama-3.3-70b-versatile` + `llama-3.1-8b-instant` |
+| Web Search | SearXNG (self-hosted Docker on port 8080) |
 | Web Scraping | Crawl4AI |
-| Signals | Reddit PRAW · HN Algolia · GitHub API · LinkedIn Jobs |
-| Email Enrichment | Hunter.io → permutations → harvester → Google dork → LinkedIn → website |
+| People — Layer A | Apollo.io REST API |
+| People — Layer B | Crawl4AI + Groq 8b extraction |
+| People — Layer C | Google dorks via SearXNG |
+| Signals | HackerNews Algolia API · GitHub API · Wappalyzer |
+| Email Enrichment | Hunter → Permutator (dnspython MX) → Harvester → Dork → Website |
 | Frontend | React 18 (CDN, no build step) |
 
 ### LLM Assignment
-| Task | Model | Reason |
-|---|---|---|
-| Query parsing | Groq `llama-3.3-70b-versatile` | Structured JSON extraction |
-| Lead scoring | Groq `llama-3.3-70b-versatile` | Complex reasoning |
-| Search query generation | Groq `llama-3.3-70b-versatile` | Creative, accurate |
-| Guard routing | Groq `llama-3.1-8b-instant` | Fast binary decision |
-| Industry inference | Groq `llama-3.1-8b-instant` | High-volume, simple |
-| Title scoring | Groq `llama-3.1-8b-instant` | High-volume, simple |
-| Browser agent (Layer 3) | Groq `llama-3.1-8b-instant` | Real-time browser control |
+
+| Task | Model |
+|---|---|
+| Query parsing, lead scoring, company search | Groq `llama-3.3-70b-versatile` |
+| Guard routing, title scoring, team page extraction | Groq `llama-3.1-8b-instant` |
 
 ---
 
@@ -73,67 +74,62 @@ Each layer falls back to the next on failure (ChallengeException, empty results,
 ### Prerequisites
 - Python 3.11+
 - Docker (for SearXNG)
-- Git
 
 ### 1. Clone and install
 ```bash
 git clone https://github.com/avinashbanoth/leadGen.git
 cd leadGen
 pip install -r requirements.txt
+crawl4ai-setup
 ```
 
-### 2. Post-install binary downloads
-```bash
-playwright install chromium          # for Crawl4AI
-playwright install firefox           # for Camoufox (Layer 2)
-python -m camoufox fetch             # Camoufox browser binary
-```
-
-### 3. Environment variables
+### 2. Environment variables
 Create `.env` in the project root:
 ```env
-# LLM
-GROQ_API_KEY=...          # console.groq.com (free tier: 100K tokens/day for 70b)
+# LLM (free — console.groq.com)
+GROQ_API_KEY=...
 
-# LinkedIn (throwaway account only — never personal)
-LI_USERNAME=...
-LI_PASSWORD=...
+# People search (free — app.apollo.io → Settings → Integrations → API Keys)
+APOLLO_API_KEY=...
 
-# Email enrichment
-HUNTER_API_KEY=...        # hunter.io (25 lookups/month free)
+# Email enrichment (free — hunter.io, 50 lookups/month)
+HUNTER_API_KEY=...
 
-# Optional signals
-GITHUB_TOKEN=...          # github.com/settings/tokens (increases rate limit)
+# Signal detection (free PAT — github.com/settings/tokens, scopes: public_repo + read:org)
+GITHUB_TOKEN=...
 ```
 
-### 4. Start SearXNG
+### 3. Start SearXNG
 ```bash
 docker-compose up -d
 ```
-Verify: `curl http://localhost:8080/search?q=test&format=json`
+Verify: open http://localhost:8080
 
-### 5. Start the server
+### 4. Start the server
 ```bash
-python -m uvicorn api.main:app --port 8000
+python -m uvicorn api.main:app --port 8000 --reload
 ```
 
-### 6. Open the dashboard
+### 5. Open the dashboard
 Navigate to **http://localhost:8000/** in your browser.
 
 ---
 
 ## Usage
 
-### Dashboard (recommended)
-Open `http://localhost:8000/` — type any B2B lead gen query and hit Enter.
+### Dashboard
+Open `http://localhost:8000/` and type any B2B lead gen query.
 
 Example queries:
-- `Find CTOs at Series B SaaS companies in the US that use React`
-- `VP Engineering contacts at UK fintech startups with 50-200 employees`
-- `Founders of AI startups that raised Series A in 2024`
-- `CFOs at healthcare software companies in Germany with revenue over 10M`
+- `Find CTOs at fintech startups in Bangalore`
+- `VP Engineering at PLM software companies in Germany`
+- `Who is the CTO at Razorpay`
+- `Find founders of SaaS companies in Singapore that recently raised Series B`
+- `CFOs at healthcare software companies in Germany`
 
-### API directly
+See `QUERY_GUIDE.md` for the full query reference.
+
+### API
 ```bash
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
@@ -143,13 +139,23 @@ curl -X POST http://localhost:8000/chat \
 Response:
 ```json
 {
-  "message": "...",
-  "status": "complete | no_results | awaiting_clarification | rejected",
-  "contacts": [...],
-  "stats": {"total": 3, "verified": 1, "partial": 2},
-  "errors": [...],
-  "elapsed_seconds": 61.2,
-  "estimated_tokens": 12000
+  "message": "Found 5 lead(s) across 2 companies...",
+  "status": "complete",
+  "contacts": [
+    {
+      "name": "Harshil Mathur",
+      "title": "CEO",
+      "company": "Razorpay",
+      "email": "harshil@razorpay.com",
+      "confidence": 80,
+      "linkedin": "linkedin.com/in/harshilmathur",
+      "score": 85,
+      "status": "partial",
+      "title_tier": 1
+    }
+  ],
+  "stats": {"total": 5, "verified": 2, "partial": 3},
+  "elapsed_seconds": 45.2
 }
 ```
 
@@ -157,21 +163,22 @@ Response:
 ```bash
 curl http://localhost:8000/stats
 ```
-```json
-{
-  "queries_today": 3,
-  "estimated_tokens_today": 36000,
-  "token_limit": 100000,
-  "tokens_remaining": 64000,
-  "reset_in_seconds": 38400
-}
-```
 
-### Batch test
-```bash
-python test_queries.py
-```
-Runs 10 diverse queries sequentially and prints status, timing, and errors for each.
+---
+
+## Output Format
+
+Each contact in results:
+
+| Field | Meaning |
+|---|---|
+| `status: verified` | Email confirmed ≥70% confidence |
+| `status: partial` | Email permutation or LinkedIn URL only |
+| `status: not_found` | Person found, no email |
+| `title_tier: 1` | C-suite / VP level (primary search) |
+| `title_tier: 2` | Director / Manager fallback (shown as `[L2 fallback]`) |
+| `confidence` | Email confidence 0–100% |
+| `score` | Lead relevance score 0–100 |
 
 ---
 
@@ -179,71 +186,56 @@ Runs 10 diverse queries sequentially and prints status, timing, and errors for e
 
 ```
 lead-gen/
-├── api/
-│   └── main.py                  FastAPI app — /chat, /stats, /health, serves frontend
+├── api/main.py                  FastAPI — /chat, /stats, /health, serves frontend
 ├── agents/
-│   ├── query_parser.py          Groq 70b extracts QueryPlan (json_mode)
+│   ├── query_parser.py          Groq 70b extracts QueryPlan
 │   ├── clarification.py         Asks user for missing details
-│   ├── company_search.py        SearXNG + Crawl4AI + Groq industry inference
-│   ├── people_finder.py         4-layer LinkedIn cascade
-│   ├── signal_filter.py         Reddit + HN + GitHub + Wappalyzer
+│   ├── company_search.py        Two-phase discovery + named-company short-circuit
+│   ├── people_finder.py         Apollo → website team → dorks, two-tier priority
+│   ├── signal_filter.py         HN + GitHub + Wappalyzer signals
 │   ├── lead_scoring.py          Groq 70b ranks leads 0–100 (no tools)
-│   ├── contact_enricher.py      6-provider email chain
-│   └── result_formatter.py      Chat message + JSON output
+│   ├── contact_enricher.py      5-provider email chain
+│   └── result_formatter.py      Chat message + JSON, grouped by company
 ├── graph/
 │   ├── state.py                 GraphState + all TypedDicts
 │   ├── orchestrator.py          LangGraph StateGraph wiring
-│   └── router.py                Guard router + agent router edges
+│   └── router.py                Guard router + agent router
 ├── tools/
-│   ├── searxng_tool.py
-│   ├── crawl4ai_tool.py
-│   ├── linkedin_api_tool.py     Layer 1
-│   ├── linkedin_scraper_tool.py Layer 2
-│   ├── browser_use_tool.py      Layer 3
-│   ├── crosslinked_tool.py      Layer 4
-│   ├── reddit_tool.py
-│   ├── hn_tool.py
-│   ├── github_tool.py
-│   └── wappalyzer_tool.py
+│   ├── searxng_tool.py          SearXNG search
+│   ├── crawl4ai_tool.py         Company website scraping
+│   ├── apollo_tool.py           Layer A — Apollo people + company search
+│   ├── website_team_tool.py     Layer B — /team /about scraper
+│   ├── crosslinked_tool.py      Layer C — Google dorks
+│   ├── hn_tool.py               HackerNews Algolia API
+│   ├── github_tool.py           GitHub Issues + org members
+│   └── wappalyzer_tool.py       Tech stack detection
 ├── providers/
-│   ├── email_provider.py        ABC
+│   ├── email_provider.py        ABC base class
 │   ├── hunter_provider.py       Level 1 — Hunter.io API
-│   ├── permutator_provider.py   Level 2 — SMTP-verified permutations
-│   ├── harvester_provider.py    Level 3 — SearXNG email harvest
-│   ├── google_dork_provider.py  Level 4 — Google dork search
-│   ├── linkedin_contact_provider.py  Level 5
-│   └── website_contact_provider.py   Level 6 — Crawl4AI /contact page
+│   ├── permutator_provider.py   Level 2 — SMTP verified (dnspython MX)
+│   ├── harvester_provider.py    Level 3 — OSINT
+│   ├── google_dork_provider.py  Level 4 — SearXNG dork
+│   └── website_contact_provider.py  Level 5 — Crawl4AI /contact /about
 ├── utils/
-│   ├── human_behavior.py        Anti-detection delays
-│   ├── session_manager.py       LinkedIn cookie persistence
-│   ├── rate_limiter.py          Rolling-window rate limiter
-│   └── role_normalizer.py       Role expansion + company normalization
-├── frontend/
-│   └── index.html               React 18 dashboard (CDN, no npm)
-├── tests/
-│   └── (pending)
+│   ├── role_normalizer.py       Role expansion + two-tier fallback map
+│   ├── human_behavior.py        Delay utilities (kept for future use)
+│   ├── session_manager.py       Cookie persistence (kept for future use)
+│   └── rate_limiter.py          Rolling-window rate limiter (kept for future use)
+├── frontend/index.html          React 18 dashboard (CDN, no npm)
 ├── docker-compose.yml           SearXNG on port 8080
 ├── requirements.txt
-└── test_queries.py              10-query evaluation script
+├── QUERY_GUIDE.md               Full query reference for end users
+└── CLAUDE.md                    Project context + build checklist
 ```
 
 ---
 
-## Known Limitations
+## Known Limits
 
-| Issue | Cause | Status |
-|---|---|---|
-| LinkedIn returns 0 people | `ChallengeException` on Voyager API without warmed session | Layer 2–4 cascade fires but needs active LinkedIn session |
-| Company search returns list pages | SearXNG finds blog aggregators instead of company homepages | Partially mitigated via `_infer_industry` prompt rejecting list pages |
-| Groq 100K tokens/day (free tier) | `llama-3.3-70b-versatile` hard daily cap | ~8 full-pipeline queries/day; 8b model has higher limit; resets midnight UTC |
-| SearXNG must be running | All web search goes through self-hosted Docker instance | `docker-compose up -d` before starting |
-
----
-
-## Query Types
-
-| Query type | Routing | Typical time |
-|---|---|---|
-| Non-lead-gen ("weather", "poem") | Rejected immediately | < 1s |
-| Vague ("find me some leads") | Clarification asked | ~2s |
-| Valid lead-gen | Full pipeline | 50–90s |
+| Constraint | Detail |
+|---|---|
+| Groq free tier | 100K tokens/day for 70b model — ~6–8 full pipeline runs/day; resets midnight UTC |
+| Apollo free tier | 50 contact export credits/month; search is unlimited |
+| Hunter free tier | 50 email lookups/month |
+| SearXNG required | All web search routes through Docker instance — run `docker-compose up -d` first |
+| SMTP on port 25 | Many ISPs block outbound port 25 — Permutator falls back to 30% confidence |

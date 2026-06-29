@@ -1,10 +1,10 @@
 # Lead Generation Multi-Agent System — POC Architecture
 
-> **Status:** Proof of Concept v4 — Final before build  
-> **Author:** Avinash  
-> **Stack:** Python 3.11+ · LangChain · LangGraph · FastAPI  
-> **Goal:** Generic, production-grade contact finder via natural language chat  
-> **Changes:** Generic QueryPlan · Guard Router · Role Normalizer · Partial Results · Extended Email Fallbacks · Multi-provider LLM (Gemini + Groq + Cerebras)
+> **Status:** Active — architecture pivot complete (June 2026)
+> **Author:** Avinash
+> **Stack:** Python 3.11+ · LangChain · LangGraph · FastAPI · Groq · Apollo.io
+> **Goal:** Generic, production-grade contact finder via natural language chat
+> **People stack:** Apollo.io (Layer A) → Website team pages (Layer B) → Google dorks (Layer C)
 
 ---
 
@@ -141,14 +141,16 @@ class CompanyFilters(TypedDict):
     tech_stack   : list[str]       # ["AWS", "Stripe"] — or empty
 
 class QueryPlan(TypedDict):
-    is_lead_gen_query   : bool          # False → guard router rejects
-    needs_clarification : bool          # True → ask user for more info
-    clarification_ask   : str | None    # question to show user
-    rejection_reason    : str | None    # why it was rejected
-    company_filters     : CompanyFilters | None
-    signal_hints        : list[str]     # ["hiring devops", "cloud cost issues"]
-    target_role         : str | None    # "CTO", "HR Head", "VP Engineering"
-    agents_needed       : list[str]     # ["company_search", "people_finder"]
+    is_lead_gen_query      : bool          # False → guard router rejects
+    needs_clarification    : bool          # True → ask user for more info
+    clarification_ask      : str | None    # question to show user
+    rejection_reason       : str | None    # why it was rejected
+    company_filters        : CompanyFilters | None
+    signal_hints           : list[str]     # ["hiring devops", "cloud cost issues"]
+    target_role            : str | None    # "CTO", "HR Head", "VP Engineering"
+    agents_needed          : list[str]     # ["company_search", "people_finder"]
+    company_named_directly : bool          # True → skip company_search (Rule 10)
+    named_company          : str | None    # exact company name when above is True
 
 class CompanyData(TypedDict):
     name        : str
@@ -163,11 +165,12 @@ class PersonData(TypedDict):
     name         : str
     title        : str
     title_score  : float    # 0.0–1.0 — how well title matches target_role
+    title_tier   : int      # 1 = C-suite/VP (primary), 2 = Director/Manager (fallback)
     company      : str
     linkedin_url : str
     email        : str | None
     phone        : str | None
-    source       : str      # which layer found this (linkedin_api / scraper / dork)
+    source       : str      # "apollo" / "website_team" / "crosslinked"
 
 class SignalData(TypedDict):
     company  : str
@@ -185,6 +188,7 @@ class LeadScore(TypedDict):
 class ContactData(TypedDict):
     name       : str
     title      : str
+    title_tier : int            # 1 = C-suite/VP, 2 = Director/Manager fallback
     company    : str
     email      : str | None     # None if not found
     confidence : int            # 0–100
@@ -193,7 +197,7 @@ class ContactData(TypedDict):
     score      : int
     status     : str            # "verified" / "partial" / "not_found"
     tried      : list[str]      # which providers were attempted
-    suggestion : str | None     # "Try LinkedIn directly: <url>" if email not found
+    suggestion : str | None     # LinkedIn URL when email not found
 
 class GraphState(TypedDict):
     query      : str
@@ -323,85 +327,63 @@ def guard_router(state: GraphState) -> str:
 
 | Tool | What it detects |
 |---|---|
-| `LinkedIn Jobs (public, no login)` | Job postings that match signal hints |
-| `Reddit PRAW` | Community posts matching signal hints |
-| `HackerNews Algolia API` | "Ask HN" threads matching signal hints |
-| `GitHub Issues API` | Open issues matching signal keywords |
+| `HackerNews Algolia API` | "Ask HN" threads matching signal hints (no auth needed) |
+| `GitHub Issues API` | Open issues matching signal keywords (GITHUB_TOKEN) |
 | `Wappalyzer` | Tech stack presence as a signal |
+
+> Reddit removed — IP blocked on most cloud/residential IPs. HN + GitHub cover equivalent signals.
 
 ---
 
 ### 4.6 People Finder Agent
 
-**What it does:** Finds the right person at each company. Uses `QueryPlan.target_role` dynamically — never hardcodes "CTO" or any role. Includes a role normalizer and a four-layer fallback.
+**What it does:** Finds the right person at each company. Uses `QueryPlan.target_role` dynamically — never hardcodes any role. Three-layer cascade with two-tier role priority.
 
 **LangGraph role:** Node — reads `GraphState.companies + query_plan.target_role`, writes `GraphState.people`
 
+**Named-company short-circuit (Rule 10):** When `query_plan.company_named_directly = True`, company_search is skipped entirely and people_finder receives the company directly from a quick Apollo lookup.
+
 **Role Normalizer (runs before search):**
 
-LinkedIn rarely has exactly the title in the query. The normalizer expands the role:
-
 ```python
-# target_role from query: "CTO"
-# normalizer expands to:
-search_titles = [
-    "CTO",
-    "Chief Technology Officer",
-    "VP Engineering",
-    "Head of Technology",
-    "Co-founder & CTO",
-    "VP of Engineering"
-]
-# tries each until results found
+# target_role = "CTO"
+# Level 1 (primary):  ["CTO", "Chief Technology Officer", "VP Engineering", "Head of Technology"]
+# Level 2 (fallback): ["Director of Engineering", "Engineering Manager", "Head of Software Development"]
 ```
 
-Also normalizes company name:
+**Three-Layer Cascade:**
+
+```
+Layer A: Apollo.io People Search API (primary)
+         search by company_name + target_titles
+         returns name, title, LinkedIn URL; verified email when available
+         → covers 270M+ professionals; large + mid-market companies
+                │
+                │ if Apollo returns nothing (small/private company)
+                ▼
+Layer B: Website Team Page Scraper
+         crawls /team /about /leadership /management /people
+         Groq 8b-instant extracts names + titles from raw page text
+         → works for any company that lists staff online (SMEs, EU companies)
+                │
+                │ if no team page found
+                ▼
+Layer C: Google Dorks via SearXNG
+         site:linkedin.com/in "title" "company"
+         extracts names from result titles, generates email permutations
+         → last resort; works for large companies with indexed profiles
+```
+
+**Two-tier role priority:**
+- **Tier 1:** C-suite/VP titles from `expand_role()` — run all 3 layers
+- **Tier 2:** Director/Manager fallback — if Tier 1 yields nothing, retry all 3 layers
+- Results marked `title_tier=1` or `title_tier=2`; Tier 2 shown as `[L2 fallback]` in output
+
+**Title relevance scoring (Groq 8b):**
 ```python
-# query says "Siemens PLM" → SearXNG finds official LinkedIn name
-# → "Siemens Digital Industries Software"
-# searches with correct name
-```
-
-**Four-Layer Fallback:**
-
-```
-Layer 1: linkedin-api (Voyager HTTP)
-         search_people(company, title)
-         get_profile_contact_info(profile_id)
-         → fastest, no browser, direct HTTP with session cookie
-                │
-                │ if rate-limited / blocked
-                ▼
-Layer 2: linkedin_scraper + Camoufox
-         Browser automation, Firefox engine
-         Stealth patches + human behavior simulation
-         → slower, more resilient, survives DOM changes less well
-                │
-                │ if LinkedIn DOM changes / selectors break
-                ▼
-Layer 3: browser-use Agent (Claude Haiku)
-         LLM reads page, decides what to click
-         No CSS selectors — adapts to any LinkedIn UI
-         → most resilient, most expensive (tokens), last resort
-                │
-                │ if LinkedIn fully inaccessible
-                ▼
-Layer 4: Public fallbacks (no LinkedIn needed)
-         • Crosslinked  — Google dorks: site:linkedin.com/in "CTO" "company"
-         • Crunchbase   — /people section via Crawl4AI
-         • GitHub API   — org members (for tech companies)
-         • Company /team or /about page via Crawl4AI
-         • Google dork  — "company name" "CTO" email site:company.com
-```
-
-Every layer writes its source into `PersonData.source` so you know which layer succeeded.
-
-**Title relevance scoring:**
-```python
-# target_role = "CTO", found title = "Co-founder & Tech Lead"
-# Claude scores: relevance = 0.85
-# reason: "Co-founder with tech focus = likely decision maker"
-# included in results with title_score, not discarded
+# target_role = "CTO", found title = "Director of Engineering"
+# score = 0.65 — strong partial match, included
+# threshold: ≥0.3 for Tier 1, ≥0.1 for Tier 2
 ```
 
 ---
@@ -441,7 +423,7 @@ Every layer writes its source into `PersonData.source` so you know which layer s
 ]
 ```
 
-**LLM:** Claude Sonnet 4.6 — reasoning task, not browsing.
+**LLM:** Groq `llama-3.3-70b-versatile` — reasoning task, not browsing.
 
 **Hallucination guard:** Scorer only reasons over data already present in GraphState. It cannot call tools or look up new information. If a field is missing, it scores lower — never invents data.
 
@@ -453,30 +435,19 @@ Every layer writes its source into `PersonData.source` so you know which layer s
 
 **LangGraph role:** Node — reads `GraphState.lead_score + people`, writes `GraphState.contacts`
 
-**EmailProvider abstraction:**
+**EmailProvider abstraction — 5 levels (tried in order, stop at first ≥30% confidence):**
 
 ```python
-from abc import ABC, abstractmethod
+# Level 1 — HunterProvider       hunter.io API (50 free/month)
+# Level 2 — PermutatorProvider   name permutations + real MX/SMTP verify (dnspython)
+# Level 3 — HarvesterProvider    OSINT sources (theHarvester)
+# Level 4 — GoogleDorkProvider   "name" "email" site:domain.com via SearXNG
+# Level 5 — WebsiteContactProvider  /team /contact pages via Crawl4AI (single crawler)
 
-class EmailProvider(ABC):
-    @abstractmethod
-    async def find_email(self, name: str, domain: str) -> dict:
-        """Returns { email, confidence, source }"""
-        ...
-
-    @abstractmethod
-    async def verify_email(self, email: str) -> dict:
-        """Returns { valid: bool, confidence, reason }"""
-        ...
-
-# Implementations (tried in order):
-class HunterProvider(EmailProvider):      # Level 1 — 25 free/month
-class PermutatorProvider(EmailProvider):  # Level 2 — f.lastname@domain.com patterns
-class TheHarvesterProvider(EmailProvider) # Level 3 — OSINT sources
-class GoogleDorkProvider(EmailProvider):  # Level 4 — "name" email site:domain.com
-class LinkedInContactProvider(EmailProvider) # Level 5 — linkedin-api contact info
-class WebsiteContactProvider(EmailProvider)  # Level 6 — /team /about via Crawl4AI
+# Fresh provider instances created per person — no shared singleton state
 ```
+
+**Fast-path:** If Apollo already returned a verified email for the person, the provider chain is skipped entirely.
 
 **Partial result — never silent failure:**
 ```json
@@ -507,50 +478,23 @@ class WebsiteContactProvider(EmailProvider)  # Level 6 — /team /about via Craw
 
 ---
 
-## 5. Camouflage & Anti-Detection Stack
+## 5. Data Sources & API Keys
 
-```
-Detection Layer     Our Solution
-─────────────────── ────────────────────────────────────────────
-Browser Fingerprint Camoufox (Firefox engine, not Chrome)
-                    + playwright-stealth (patches navigator.webdriver,
-                    HeadlessChrome UA, WebGL, plugin array, canvas)
-
-TLS / Network       Patchright (closes CDP Runtime.Enable leak)
-                    + realistic HTTP headers for linkedin-api
-
-Behavioral          HumanBehavior utility:
-                    • random_delay(800ms–3000ms) between actions
-                    • human_type() — variable keystroke speed
-                    • human_scroll() — gradual, not instant
-                    • random_mouse_move() before clicks
-
-Session             SessionManager:
-                    • Warm session before any search
-                      (feed → own profile → notifications → then search)
-                    • Persist cookies to session.json
-                    • Reuse warmed session — never fresh login per run
-
-Rate Limiting       RateLimiter:
-                    • Max 30 profiles/hour
-                    • Max 15 searches/day
-                    • 8–20s random delay between profiles
-                    • 30–90s random delay between searches
-
-IP Reputation       POC: local machine IP (fine for testing)
-                    Production: residential IP (not datacenter)
-```
+| Source | Purpose | Auth | Tier |
+|---|---|---|---|
+| Apollo.io | People search + company lookup | `APOLLO_API_KEY` | Free: unlimited search, 50 email exports/month |
+| Hunter.io | Email enrichment Level 1 | `HUNTER_API_KEY` | Free: 50 lookups/month |
+| SearXNG | Web search + Google dorks | None (self-hosted Docker) | Unlimited |
+| Crawl4AI | Web scraping (company pages, team pages) | None | Unlimited |
+| GitHub API | Signal detection (issues, org members) | `GITHUB_TOKEN` (PAT) | Free: 5000 req/hr authenticated |
+| HackerNews | Signal detection (Ask HN threads) | None | Unlimited |
+| Groq | All LLM inference | `GROQ_API_KEY` | Free: 100K tokens/day (70b), higher limit for 8b |
 
 ```bash
-# Install
-pip install camoufox[geoip] playwright-stealth patchright browser-use
-python -m camoufox fetch
-python -m patchright install chromium
-```
-
-**Playwright codegen** (built-in, no extra install) — use during development to record LinkedIn selectors:
-```bash
-python -m playwright codegen https://www.linkedin.com
+# Setup
+pip install -r requirements.txt
+crawl4ai-setup                    # installs Playwright Chromium for Crawl4AI
+docker-compose up -d              # starts SearXNG on port 8080
 ```
 
 ---
