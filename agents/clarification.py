@@ -2,8 +2,8 @@ from graph.state import GraphState
 
 _FALLBACK_QUESTION = (
     "What industry or type of company are you targeting? "
-    "What role are you looking for (or should I find the top decision makers)? "
-    "Any location preference?"
+    "Any location preference? "
+    "(If you don't mention a role I'll default to Founder / CEO / MD.)"
 )
 
 
@@ -20,9 +20,10 @@ async def clarification_node(state: GraphState) -> dict:
         f"I need a bit more detail to find the right leads.\n\n"
         f"{question}\n\n"
         f"You can also just rephrase in one line, e.g.:\n"
-        f"  \"Find CTOs at fintech startups in Bangalore\"\n"
-        f"  \"VP Sales at SaaS companies in Germany with 200+ employees\"\n"
-        f"  \"founders of e-commerce companies struggling with payment integration\""
+        f"  \"Find decision makers at fintech startups in Bangalore\"\n"
+        f"  \"SaaS companies in Germany with 200+ employees\"\n"
+        f"  \"e-commerce companies in Mumbai struggling with payment integration\"\n"
+        f"(If you don't specify a role, I'll target Founder / CEO / MD automatically.)"
     )
 
     return {

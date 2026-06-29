@@ -99,23 +99,25 @@ Invalid examples (set is_lead_gen_query=False):
 - "Show me restaurants near me" → consumer search, no decision-maker intent
 
 ## When to ask for clarification (needs_clarification=True)
-Ask when the query is a valid lead-gen intent but lacks enough detail to search:
-- "Find me some companies" → valid intent, but what industry? what role? where?
-- "Get contacts from startups" → valid intent, but too vague
+Ask ONLY when the query lacks enough detail to identify what type of company or industry to search.
+- "Find me some companies" → needs industry and location at minimum
+- "Get contacts from startups" → needs industry and location at minimum
 
-Do NOT ask for clarification if the query has enough to start searching.
+Do NOT ask for clarification if:
+- The role is missing — default to top executives (Founder/CEO/MD) automatically.
+- The query has an industry and a location (or a named company).
+- Only one piece (industry OR location) is missing — make a reasonable inference.
 
 When needs_clarification is True, set clarification_ask to a message that:
-1. Echoes what you DID understand (e.g. "You're looking for startup contacts")
-2. Lists ONLY the specific missing pieces (industry? role? location?)
+1. Echoes what you DID understand
+2. Lists ONLY the critical missing pieces (industry? location?) — never ask about role
 3. Gives a concrete example of a complete query
 
 Example: If the user says "find startup contacts", set clarification_ask to:
 "You're looking for contacts at startups — here's what I still need:
 - Industry (e.g. fintech, SaaS, healthcare, logistics)
-- Decision-maker role (e.g. CTO, VP Sales, Founder — or leave it and I'll target the top executives)
 - Location (e.g. Bangalore, Germany, US)
-Try: \"Find CTOs at fintech startups in Bangalore\""
+Try: \"Find decision makers at fintech startups in Bangalore\""
 
 ## company_named_directly
 Set company_named_directly=True when the user names a SPECIFIC company (e.g. "Find CTO at Razorpay",
@@ -154,15 +156,13 @@ Examples:
 
 ## target_role
 Expand the role to cover equivalent titles:
-- "CTO" → "CTO / Chief Technology Officer / VP Engineering / Head of Technology"
-- "HR head" → "HR Head / CHRO / VP People / Head of Human Resources"
-- "founder" → "Founder / Co-founder / CEO / Managing Director"
+- "CTO" → "CTO OR Chief Technology Officer OR VP Engineering OR Head of Technology"
+- "HR head" → "HR Head OR CHRO OR VP People OR Head of Human Resources"
+- "founder" → "Founder OR Co-founder OR CEO OR Managing Director"
 
-If the query explicitly names a role, use that role (expanded).
-If no role is mentioned but needs_clarification is false, infer the most relevant decision-maker
-for the specific industry and context in the query. Think about who actually makes purchasing
-decisions in that sector — it varies by industry. Use your knowledge across all industries,
-not a fixed formula. Format as "Title1 OR Title2 OR Title3".
+If the query explicitly names a role, use that role (expanded). Format as "Title1 OR Title2 OR Title3".
+If no role is mentioned, set target_role to exactly: "Founder OR CEO OR MD OR Owner OR Managing Director OR Director"
+Never infer an industry-specific role when the user did not ask for one.
 Only set target_role to null when needs_clarification is true (query is too vague to act on).
 
 Return only valid JSON matching the QueryPlan schema. No explanation, no preamble, no markdown."""
@@ -171,6 +171,8 @@ Return only valid JSON matching the QueryPlan schema. No explanation, no preambl
 # ---------------------------------------------------------------------------
 # Node function
 # ---------------------------------------------------------------------------
+
+_DEFAULT_ROLE = "Founder OR CEO OR MD OR Owner OR Managing Director OR Director"
 
 import logging as _logging
 _qp_logger = _logging.getLogger(__name__)
@@ -192,6 +194,10 @@ async def query_parser(state: GraphState) -> dict:
             else:
                 raise
 
+        target_role = result.target_role
+        if not target_role and not result.needs_clarification:
+            target_role = _DEFAULT_ROLE
+
         query_plan = {
             "is_lead_gen_query"      : result.is_lead_gen_query,
             "needs_clarification"    : result.needs_clarification,
@@ -199,7 +205,7 @@ async def query_parser(state: GraphState) -> dict:
             "rejection_reason"       : result.rejection_reason,
             "company_filters"        : result.company_filters.model_dump() if result.company_filters else None,
             "signal_hints"           : result.signal_hints,
-            "target_role"            : result.target_role,
+            "target_role"            : target_role,
             "agents_needed"          : result.agents_needed,
             "company_named_directly" : result.company_named_directly,
             "named_company"          : result.named_company,
