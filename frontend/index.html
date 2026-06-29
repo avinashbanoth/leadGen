@@ -4,24 +4,91 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lead Gen Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Tailwind CDN — preflight disabled so it doesn't conflict with existing base CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { corePlugins: { preflight: false } }</script>
   <style>
+    :root {
+      --bg:       #060c10;
+      --surface:  #0b1820;
+      --raised:   #0f2232;
+      --border:   #182d40;
+      --accent:   #00cfb4;
+      --amber:    #e8a020;
+      --green:    #22c65e;
+      --red:      #e85050;
+      --blue:     #4d9de0;
+      --text:     #c8dde8;
+      --muted:    #5a7890;
+      --dim:      #2e4555;
+    }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; }
-    body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    ::-webkit-scrollbar { width: 6px; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
-    textarea:focus { outline: none; border-color: #58a6ff !important; }
-    textarea { caret-color: #58a6ff; }
-    .example-chip:hover { border-color: #58a6ff !important; color: #c9d1d9 !important; }
-    .send-btn:hover:not(:disabled) { background: #2ea043 !important; }
-    .err-toggle:hover { color: #c9d1d9 !important; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent) !important;
+      box-shadow: 0 0 0 3px rgba(0,207,180,0.1);
+    }
+    textarea { caret-color: var(--accent); }
+
+    /* ── Radar spinner (signature element) ── */
+    @keyframes radar-spin { to { transform: rotate(360deg); } }
+    .radar-spinner {
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-right-color: rgba(0,207,180,0.3);
+      flex-shrink: 0;
+      animation: radar-spin 0.85s linear infinite;
+    }
+
+    /* ── Message enter animation ── */
+    @keyframes slide-up { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+    .msg-in { animation: slide-up 0.16s ease; }
+
+    /* ── Interactive states ── */
+    .chip { transition: border-color 0.14s, background 0.14s; }
+    .chip:hover { border-color: var(--accent) !important; color: var(--text) !important; }
+    .send-btn { transition: background 0.14s, opacity 0.14s; }
+    .send-btn:hover:not(:disabled) { background: #00b8a2 !important; }
+    .err-toggle:hover { color: var(--text) !important; }
+
+    /* ── Table row hover ── */
+    .result-row { transition: background 0.1s; }
+    .result-row:hover td { background: var(--raised) !important; }
+    .result-row:hover td:first-child { border-left: 2px solid var(--accent); padding-left: 9px; }
+
+    /* ── Sidebar section labels ── */
+    .sec-label {
+      display: inline-block;
+      border-left: 2px solid var(--accent);
+      padding-left: 6px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .radar-spinner { animation: none; border-top-color: var(--accent); }
+      .msg-in { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -29,14 +96,13 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
-
     const BASE = window.location.origin;
 
     const STATUS_COLOR = {
-      complete              : '#3fb950',
-      no_results            : '#d29922',
-      awaiting_clarification: '#58a6ff',
-      rejected              : '#f85149',
+      complete              : '#22c65e',
+      no_results            : '#e8a020',
+      awaiting_clarification: '#4d9de0',
+      rejected              : '#e85050',
     };
     const STATUS_LABEL = {
       complete              : 'Complete',
@@ -61,7 +127,6 @@
       const m = Math.floor((seconds % 3600) / 60);
       return `${h}h ${m}m`;
     }
-
     function guessType(q) {
       const lo = q.toLowerCase();
       const rejects = ['weather', 'poem', 'write me', 'recipe', 'what is', 'explain', 'tell me about', 'how to'];
@@ -70,27 +135,44 @@
       return { label: 'Full pipeline', eta: '~ 60s', tokens: 12000 };
     }
 
-    // ----- small components -----
+    // ── Crosshair icon (SVG) ──
+    function Reticle({ size = 20, opacity = 1 }) {
+      const r1 = size * 0.4, r2 = size * 0.22, dot = size * 0.1;
+      const cx = size / 2, cy = size / 2;
+      const tick = size * 0.14;
+      return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none" style={{ opacity, flexShrink: 0 }}>
+          <circle cx={cx} cy={cy} r={r1} stroke="var(--accent)" strokeWidth={size * 0.06} strokeDasharray={`${size * 0.18} ${size * 0.12}`} />
+          <circle cx={cx} cy={cy} r={r2} stroke="var(--accent)" strokeWidth={size * 0.04} opacity="0.35" />
+          <circle cx={cx} cy={cy} r={dot} fill="var(--accent)" />
+          <line x1={cx} y1={size * 0.02} x2={cx} y2={cy - r1 - size * 0.01} stroke="var(--accent)" strokeWidth={size * 0.06} />
+          <line x1={cx} y1={cy + r1 + size * 0.01} x2={cx} y2={size * 0.98} stroke="var(--accent)" strokeWidth={size * 0.06} />
+          <line x1={size * 0.02} y1={cy} x2={cx - r1 - size * 0.01} y2={cy} stroke="var(--accent)" strokeWidth={size * 0.06} />
+          <line x1={cx + r1 + size * 0.01} y1={cy} x2={size * 0.98} y2={cy} stroke="var(--accent)" strokeWidth={size * 0.06} />
+        </svg>
+      );
+    }
 
+    // ── Status badge ──
     function Badge({ status }) {
-      const color = STATUS_COLOR[status] || '#8b949e';
+      const color = STATUS_COLOR[status] || '#5a7890';
       return (
         <span style={{
-          display: 'inline-block', padding: '2px 8px', borderRadius: 4,
-          fontSize: 11, fontWeight: 600, letterSpacing: '0.03em',
-          background: color + '22', color, border: `1px solid ${color}44`,
+          display: 'inline-block', padding: '2px 8px', borderRadius: 3,
+          fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
+          background: color + '1e', color, border: `1px solid ${color}45`,
         }}>
           {STATUS_LABEL[status] || status}
         </span>
       );
     }
 
+    // ── Results table ──
     function CompanyTable({ companies, contacts }) {
       const hasCompanies = companies && companies.length > 0;
       const hasContacts  = contacts  && contacts.length  > 0;
       if (!hasCompanies && !hasContacts) return null;
 
-      // Build contact map: company name (lowercase) → contacts sorted by score desc
       const contactMap = {};
       (contacts || []).forEach(c => {
         const key = (c.company || '').toLowerCase().trim();
@@ -101,13 +183,11 @@
         arr.sort((a, b) => (b.score || 0) - (a.score || 0))
       );
 
-      // One row per discovered company
       const rows = (companies || []).map(co => ({
         co,
         contact: (contactMap[(co.name || '').toLowerCase().trim()] || [])[0] || null,
       }));
 
-      // Add contacts whose company didn't appear in the companies list (edge case)
       const knownNames = new Set((companies || []).map(c => (c.name || '').toLowerCase().trim()));
       Object.entries(contactMap).forEach(([key, cts]) => {
         if (!knownNames.has(key)) {
@@ -115,58 +195,63 @@
         }
       });
 
-      const COLS = ['#', 'Company', 'Industry', 'Website', 'Contact Name', 'Title', 'Email', 'Confidence'];
+      const COLS = ['#', 'Company', 'Industry', 'Website', 'Contact', 'Title', 'Email', 'Conf.'];
+      const MONO = { fontFamily: "'JetBrains Mono', 'Cascadia Code', monospace" };
 
       return (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 11, color: '#8b949e', fontWeight: 600, letterSpacing: '0.06em', marginBottom: 8 }}>
-            RESULTS — {rows.length} COMPAN{rows.length === 1 ? 'Y' : 'IES'}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 600, letterSpacing: '0.08em', marginBottom: 8 }}>
+            RESULTS — {rows.length} {rows.length === 1 ? 'COMPANY' : 'COMPANIES'}
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 680 }}>
+          <div style={{ overflowX: 'auto', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 700 }}>
               <thead>
-                <tr>
+                <tr style={{ background: 'var(--raised)' }}>
                   {COLS.map(h => (
                     <th key={h} style={{
-                      textAlign: 'left', padding: '5px 8px', color: '#8b949e',
-                      borderBottom: '1px solid #30363d', fontWeight: 500, whiteSpace: 'nowrap',
+                      textAlign: 'left', padding: '7px 10px', color: 'var(--muted)',
+                      borderBottom: '1px solid var(--border)', fontWeight: 500,
+                      whiteSpace: 'nowrap', fontSize: 10, letterSpacing: '0.05em',
                     }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.map(({ co, contact }, i) => {
-                  const conf   = contact?.confidence;
-                  const status = contact?.status;
-                  const emailColor = status === 'verified' ? '#3fb950' : '#d29922';
-                  const confColor  = conf >= 70 ? '#3fb950' : conf >= 30 ? '#d29922' : '#8b949e';
+                  const conf  = contact?.confidence;
+                  const verified = contact?.status === 'verified';
+                  const emailColor = verified ? 'var(--accent)' : 'var(--amber)';
+                  const confColor  = conf >= 70 ? '#22c65e' : conf >= 30 ? '#e8a020' : 'var(--muted)';
                   const site = (co.website || '').replace(/^https?:\/\/(www\.)?/, '');
                   return (
-                    <tr key={i} style={{ background: i % 2 ? '#ffffff06' : 'transparent' }}>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{i + 1}</td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                        {co.name || '—'}
+                    <tr key={i} className="result-row">
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--dim)', ...MONO, fontSize: 11 }}>{i + 1}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        {co.name || <span style={{ color: 'var(--dim)' }}>—</span>}
                       </td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>
-                        {co.industry || '—'}
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--muted)', whiteSpace: 'nowrap', fontSize: 11 }}>
+                        {co.industry || <span style={{ color: 'var(--dim)' }}>—</span>}
                       </td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>
-                        {site ? (
-                          <a href={co.website} target="_blank" rel="noopener noreferrer"
-                            style={{ color: '#58a6ff', textDecoration: 'none' }}>{site}</a>
-                        ) : '—'}
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', ...MONO, fontSize: 11 }}>
+                        {site
+                          ? <a href={co.website} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)', textDecoration: 'none' }}>{site}</a>
+                          : <span style={{ color: 'var(--dim)' }}>—</span>}
                       </td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d' }}>{contact?.name || '—'}</td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', color: '#8b949e' }}>{contact?.title || '—'}</td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d', fontFamily: 'monospace', fontSize: 11 }}>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', fontWeight: 500 }}>
+                        {contact?.name || <span style={{ color: 'var(--dim)' }}>—</span>}
+                      </td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--muted)', whiteSpace: 'nowrap', fontSize: 11 }}>
+                        {contact?.title || <span style={{ color: 'var(--dim)' }}>—</span>}
+                      </td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', ...MONO, fontSize: 11 }}>
                         {contact?.email
                           ? <span style={{ color: emailColor }}>{contact.email}</span>
-                          : '—'}
+                          : <span style={{ color: 'var(--dim)' }}>—</span>}
                       </td>
-                      <td style={{ padding: '6px 8px', borderBottom: '1px solid #21262d' }}>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', ...MONO, fontSize: 11 }}>
                         {conf != null && conf > 0
                           ? <span style={{ color: confColor }}>{conf}%</span>
-                          : '—'}
+                          : <span style={{ color: 'var(--dim)' }}>—</span>}
                       </td>
                     </tr>
                   );
@@ -178,35 +263,38 @@
       );
     }
 
+    // ── Agent message ──
     function AgentMsg({ msg }) {
       const [showErr, setShowErr] = useState(false);
       return (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+        <div className="msg-in" style={{ display: 'flex', justifyContent: 'flex-start' }}>
           <div style={{
-            maxWidth: '85%', background: '#161b22', border: '1px solid #30363d',
-            borderRadius: '2px 12px 12px 12px', padding: '12px 16px', fontSize: 14,
+            maxWidth: '88%', background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: '2px 12px 12px 12px', padding: '14px 18px',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <Badge status={msg.status} />
               {msg.elapsed != null && (
-                <span style={{ color: '#8b949e', fontSize: 12 }}>{fmtTime(msg.elapsed)}</span>
+                <span style={{ color: 'var(--muted)', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }}>
+                  {fmtTime(msg.elapsed)}
+                </span>
               )}
               {msg.estimated_tokens > 0 && (
-                <span style={{ color: '#8b949e', fontSize: 12 }}>~{fmtTokens(msg.estimated_tokens)} tokens</span>
+                <span style={{ color: 'var(--dim)', fontSize: 11 }}>~{fmtTokens(msg.estimated_tokens)} tok</span>
               )}
             </div>
-            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{msg.content}</div>
+            <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65, fontSize: 13.5 }}>{msg.content}</div>
             <CompanyTable companies={msg.companies} contacts={msg.contacts} />
             {msg.errors && msg.errors.length > 0 && (
-              <div style={{ marginTop: 10 }}>
+              <div style={{ marginTop: 12 }}>
                 <button className="err-toggle" onClick={() => setShowErr(v => !v)}
-                  style={{ background: 'none', border: 'none', color: '#8b949e', fontSize: 12, cursor: 'pointer', padding: 0 }}>
+                  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 11, cursor: 'pointer', padding: 0 }}>
                   {showErr ? '▲' : '▼'} {msg.errors.length} pipeline issue{msg.errors.length > 1 ? 's' : ''}
                 </button>
                 {showErr && (
-                  <div style={{ marginTop: 6, background: '#0d1117', borderRadius: 4, padding: '6px 10px' }}>
+                  <div style={{ marginTop: 6, background: 'var(--bg)', borderRadius: 4, padding: '8px 12px' }}>
                     {msg.errors.map((e, i) => (
-                      <div key={i} style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.7 }}>• {e}</div>
+                      <div key={i} style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.7, fontFamily: "'JetBrains Mono', monospace" }}>• {e}</div>
                     ))}
                   </div>
                 )}
@@ -217,13 +305,18 @@
       );
     }
 
+    // ── User message — teal left-border "transmission" style ──
     function UserMsg({ content }) {
       return (
-        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div className="msg-in" style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <div style={{
-            maxWidth: '70%', background: '#1f4068', color: '#c9d1d9',
-            padding: '10px 14px', borderRadius: '12px 12px 2px 12px',
-            fontSize: 14, lineHeight: 1.5,
+            maxWidth: '70%',
+            background: 'rgba(0,207,180,0.07)',
+            borderLeft: '2px solid var(--accent)',
+            color: 'var(--text)',
+            padding: '10px 14px 10px 16px',
+            borderRadius: '0 10px 10px 0',
+            fontSize: 14, lineHeight: 1.55,
           }}>
             {content}
           </div>
@@ -231,51 +324,53 @@
       );
     }
 
+    // ── Loading — radar spinner (signature) ──
     function LoadingMsg({ elapsed }) {
-      const dots = '.'.repeat((Math.floor(elapsed) % 3) + 1);
       const pct = Math.min(100, (elapsed / 90) * 100);
       return (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+        <div className="msg-in" style={{ display: 'flex', justifyContent: 'flex-start' }}>
           <div style={{
-            background: '#161b22', border: '1px solid #30363d',
-            borderRadius: '2px 12px 12px 12px', padding: '12px 16px',
-            fontSize: 14, minWidth: 200, opacity: 0.8,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: '2px 12px 12px 12px', padding: '16px 22px',
+            display: 'flex', alignItems: 'center', gap: 18,
           }}>
-            <div style={{ color: '#8b949e', marginBottom: 8 }}>
-              Searching{dots} <span style={{ color: '#58a6ff' }}>{fmtTime(elapsed)}</span>
-            </div>
-            <div style={{ height: 4, background: '#21262d', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{
-                height: '100%', background: '#58a6ff', borderRadius: 2,
-                width: `${pct}%`, transition: 'width 0.5s linear',
-              }} />
+            <div className="radar-spinner" />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                Scanning signals
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", color: 'var(--accent)', fontSize: 12 }}>
+                  {fmtTime(elapsed)}
+                </span>
+              </div>
+              <div style={{ width: 150, height: 2, background: 'var(--border)', borderRadius: 1, overflow: 'hidden', marginBottom: 5 }}>
+                <div style={{ height: '100%', background: 'var(--accent)', opacity: 0.65, width: `${pct}%`, transition: 'width 0.5s linear', borderRadius: 1 }} />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>agents running in parallel</div>
             </div>
           </div>
         </div>
       );
     }
 
-    // ----- API Credits section -----
-
+    // ── API Credits widgets ──
     function KeyBadge({ hint, configured }) {
+      const MONO = { fontFamily: "'JetBrains Mono', monospace" };
       if (!configured) return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono"
-          style={{ background: '#f8514922', color: '#f85149', border: '1px solid #f8514944' }}>
+        <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: 10, ...MONO, background: 'rgba(232,80,80,0.12)', color: '#e85050', border: '1px solid rgba(232,80,80,0.28)' }}>
           not set
         </span>
       );
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono"
-          style={{ background: '#3fb95018', color: '#3fb950', border: '1px solid #3fb95033' }}>
+        <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: 10, ...MONO, background: 'rgba(0,207,180,0.1)', color: 'var(--accent)', border: '1px solid rgba(0,207,180,0.25)' }}>
           {hint}
         </span>
       );
     }
 
-    function MiniBar({ pct, warn }) {
-      const color = pct > 80 ? '#f85149' : pct > 50 ? '#d29922' : '#3fb950';
+    function MiniBar({ pct }) {
+      const color = pct > 80 ? '#e85050' : pct > 50 ? '#e8a020' : 'var(--accent)';
       return (
-        <div className="w-full rounded-full overflow-hidden" style={{ height: 3, background: '#21262d' }}>
+        <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', marginTop: 4 }}>
           <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2, transition: 'width 0.4s ease' }} />
         </div>
       );
@@ -283,25 +378,28 @@
 
     function StatusDot({ active, label }) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs"
-          style={{ color: active ? '#3fb950' : '#f85149' }}>
-          <span style={{
-            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
-            background: active ? '#3fb950' : '#f85149',
-          }} />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: active ? 'var(--accent)' : '#e85050' }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: active ? 'var(--accent)' : '#e85050', display: 'inline-block' }} />
           {label}
         </span>
       );
     }
 
-    function CreditsSection({ credits, lastRefreshed }) {
-      if (!credits) return (
-        <div className="pb-3 mb-3" style={{ borderBottom: '1px solid #21262d' }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600, marginBottom: 10 }}>
-            API CREDITS
-          </div>
-          <div style={{ fontSize: 11, color: '#8b949e' }}>Loading…</div>
+    function CredRow({ label, right }) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+          <span style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</span>
+          {right}
         </div>
+      );
+    }
+
+    function CreditsSection({ credits, lastRefreshed }) {
+      const MONO = { fontFamily: "'JetBrains Mono', monospace" };
+      if (!credits) return (
+        <Section title="API CREDITS">
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>Loading…</div>
+        </Section>
       );
 
       const { groq = {}, hunter = {}, apollo = {} } = credits;
@@ -309,79 +407,53 @@
       const hunterAvail = hunter.available ?? 50;
       const hunterPct   = Math.min(100, Math.round((hunterUsed / hunterAvail) * 100));
       const refreshLabel = lastRefreshed
-        ? `Updated ${lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        ? lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '';
 
       return (
-        <div className="pb-3 mb-3" style={{ borderBottom: '1px solid #21262d' }}>
-          {/* Section header */}
-          <div className="flex items-center justify-between mb-2">
-            <span style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600 }}>
-              API CREDITS
-            </span>
-            {refreshLabel && (
-              <span style={{ fontSize: 10, color: '#484f58' }}>{refreshLabel}</span>
-            )}
-          </div>
+        <Section title="API CREDITS" note={refreshLabel}>
+          <CredRow label="Groq" right={<KeyBadge hint={groq.key_hint} configured={groq.configured} />} />
+          <CredRow label="Queries this key" right={
+            <span style={{ fontSize: 12, color: 'var(--text)', ...MONO }}>{groq.queries ?? 0}</span>
+          } />
+          {groq.errors > 0 && (
+            <div style={{ marginTop: 4, fontSize: 11, color: '#e85050', background: 'rgba(232,80,80,0.08)', borderRadius: 3, padding: '3px 7px' }}>
+              ⚠ {groq.errors} rate limit hit{groq.errors !== 1 ? 's' : ''}
+            </div>
+          )}
 
-          {/* ── Groq ── */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-1">
-              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Groq</span>
-              <KeyBadge hint={groq.key_hint} configured={groq.configured} />
-            </div>
-            <div className="flex justify-between items-center">
-              <span style={{ fontSize: 11, color: '#8b949e' }}>Queries this key</span>
-              <span style={{ fontSize: 11, color: '#c9d1d9', fontWeight: 600 }}>{groq.queries ?? 0}</span>
-            </div>
-            {groq.errors > 0 && (
-              <div className="flex items-center gap-1 mt-1"
-                style={{ fontSize: 11, color: '#f85149', background: '#f8514910', borderRadius: 4, padding: '3px 6px' }}>
-                <span>⚠</span>
-                <span>{groq.errors} rate limit hit{groq.errors !== 1 ? 's' : ''}</span>
-              </div>
-            )}
-          </div>
+          <Divider />
 
-          {/* ── Hunter ── */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-1">
-              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Hunter</span>
-              {hunter.configured
-                ? <span style={{ fontSize: 11, color: '#c9d1d9' }}>{hunterUsed} / {hunterAvail}</span>
-                : <StatusDot active={false} label="not set" />}
-            </div>
-            {hunter.configured && (
-              <>
-                <MiniBar pct={hunterPct} />
-                <div style={{ fontSize: 10, color: '#484f58', marginTop: 3 }}>
-                  {hunterAvail - hunterUsed} searches remaining
-                </div>
-              </>
-            )}
-          </div>
+          <CredRow label="Hunter" right={
+            hunter.configured
+              ? <span style={{ fontSize: 11, color: 'var(--text)', ...MONO }}>{hunterUsed}/{hunterAvail}</span>
+              : <StatusDot active={false} label="not set" />
+          } />
+          {hunter.configured && (
+            <>
+              <MiniBar pct={hunterPct} />
+              <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 3 }}>{hunterAvail - hunterUsed} remaining</div>
+            </>
+          )}
 
-          {/* ── Apollo ── */}
-          <div>
-            <div className="flex items-center justify-between">
-              <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 500 }}>Apollo</span>
-              {apollo.configured
-                ? <StatusDot active={apollo.active} label={apollo.active ? 'active' : 'inactive'} />
-                : <StatusDot active={false} label="not set" />}
-            </div>
-          </div>
-        </div>
+          <Divider />
+
+          <CredRow label="Apollo" right={
+            apollo.configured
+              ? <StatusDot active={apollo.active} label={apollo.active ? 'active' : 'inactive'} />
+              : <StatusDot active={false} label="not set" />
+          } />
+        </Section>
       );
     }
 
-    // ----- Stats sidebar -----
-
+    // ── Sidebar ──
     function StatsPanel({ stats, lastMsg, nextEst, credits, creditsRefreshed }) {
       const [countdown, setCountdown] = useState('');
 
       useEffect(() => {
         const tick = () => {
-          const now = new Date();
+          const now  = new Date();
           const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
           const diff = Math.max(0, Math.floor((next - now) / 1000));
           setCountdown(fmtCountdown(diff));
@@ -391,107 +463,102 @@
         return () => clearInterval(id);
       }, []);
 
+      const MONO = { fontFamily: "'JetBrains Mono', monospace" };
       const used  = stats?.estimated_tokens_today || 0;
       const limit = stats?.token_limit || 100_000;
       const pct   = Math.min(100, Math.round((used / limit) * 100));
-      const barColor = pct > 90 ? '#f85149' : pct > 70 ? '#d29922' : '#3fb950';
+      const barColor = pct > 90 ? '#e85050' : pct > 70 ? '#e8a020' : 'var(--accent)';
       const queriesLeft = Math.floor((limit - used) / 12_000);
 
       return (
         <aside style={{
-          width: 260, background: '#0d1117', borderLeft: '1px solid #30363d',
-          overflowY: 'auto', padding: '16px 14px', flexShrink: 0,
-          display: 'flex', flexDirection: 'column', gap: 0,
+          width: 252, background: 'var(--surface)', borderLeft: '1px solid var(--border)',
+          overflowY: 'auto', padding: '16px 14px', flexShrink: 0, display: 'flex', flexDirection: 'column',
         }}>
-          {/* API Credits */}
           <CreditsSection credits={credits} lastRefreshed={creditsRefreshed} />
 
-          {/* Token usage */}
-          <Section title="TOKEN USAGE — TODAY">
-            <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
-              <span style={{ color: '#c9d1d9' }}>{fmtTokens(used)}</span>
-              <span style={{ color: '#8b949e', fontSize: 14 }}> / {fmtTokens(limit)}</span>
+          <Section title="TOKEN USAGE">
+            <div style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)', ...MONO }}>{fmtTokens(used)}</span>
+              <span style={{ color: 'var(--muted)', fontSize: 12 }}> / {fmtTokens(limit)}</span>
             </div>
-            <div style={{ height: 6, background: '#21262d', borderRadius: 3, overflow: 'hidden', marginBottom: 6 }}>
-              <div style={{ height: '100%', background: barColor, borderRadius: 3, width: `${pct}%`, transition: 'width 0.5s ease' }} />
+            <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', marginBottom: 6 }}>
+              <div style={{ height: '100%', background: barColor, borderRadius: 2, width: `${pct}%`, transition: 'width 0.5s ease' }} />
             </div>
-            <Row left={`${pct}% used`} right={`Resets in ${countdown}`} />
+            <Row left={`${pct}% used`} right={`Resets ${countdown}`} />
           </Section>
 
-          {/* Queries */}
           <Section title="QUERIES TODAY">
-            <div style={{ fontSize: 30, fontWeight: 700, color: '#58a6ff', lineHeight: 1, marginBottom: 4 }}>
+            <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--amber)', lineHeight: 1, marginBottom: 4, ...MONO }}>
               {stats?.queries_today || 0}
             </div>
-            <div style={{ color: '#8b949e', fontSize: 12 }}>
-              ~{Math.max(0, queriesLeft)} full-pipeline queries left
-            </div>
+            <div style={{ color: 'var(--muted)', fontSize: 11 }}>~{Math.max(0, queriesLeft)} full runs left</div>
           </Section>
 
-          {/* Last query */}
           {lastMsg && (
             <Section title="LAST QUERY">
-              <Row left="Status">
-                <Badge status={lastMsg.status} />
-              </Row>
-              <Row left="Time taken" right={fmtTime(lastMsg.elapsed || 0)} />
-              <Row left="Est. tokens" right={`~${fmtTokens(TOKEN_EST[lastMsg.status] || 8000)}`} />
+              <Row left="Status"><Badge status={lastMsg.status} /></Row>
+              <Row left="Time" right={fmtTime(lastMsg.elapsed || 0)} />
+              <Row left="Tokens" right={`~${fmtTokens(TOKEN_EST[lastMsg.status] || 8000)}`} />
             </Section>
           )}
 
-          {/* Next estimate */}
           {nextEst && (
-            <Section title="NEXT QUERY ESTIMATE">
+            <Section title="NEXT ESTIMATE">
               <Row left="Type" right={nextEst.label} />
-              <Row left="Est. time" right={nextEst.eta} highlight />
-              <Row left="Est. tokens" right={`~${fmtTokens(nextEst.tokens)}`} />
+              <Row left="ETA" right={nextEst.eta} highlight />
+              <Row left="Tokens" right={`~${fmtTokens(nextEst.tokens)}`} />
             </Section>
           )}
 
-          {/* Models */}
           <Section title="MODELS" last>
-            <ModelRow tag="70b" color="#58a6ff" bg="#1a2a4a" label="Query parse · Lead score · Search" />
-            <ModelRow tag="8b" color="#3fb950" bg="#1a3a2a" label="Industry · Title scoring · Routing" />
+            <ModelTag tag="llama-70b" color="#4d9de0" label="Parser · Scorer · Search" />
+            <ModelTag tag="llama-8b"  color="#22c65e" label="Router · Title scoring" />
           </Section>
         </aside>
       );
     }
 
-    function Section({ title, children, last }) {
+    function Section({ title, note, children, last }) {
       return (
-        <div style={{ borderBottom: last ? 'none' : '1px solid #21262d', paddingBottom: 14, marginBottom: 14 }}>
-          <div style={{ fontSize: 10, letterSpacing: '0.08em', color: '#8b949e', fontWeight: 600, marginBottom: 10 }}>
-            {title}
+        <div style={{ borderBottom: last ? 'none' : '1px solid var(--border)', paddingBottom: 14, marginBottom: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span className="sec-label">{title}</span>
+            {note && <span style={{ fontSize: 10, color: 'var(--dim)' }}>{note}</span>}
           </div>
           {children}
         </div>
       );
     }
 
+    function Divider() {
+      return <div style={{ height: 1, background: 'var(--border)', margin: '10px 0' }} />;
+    }
+
     function Row({ left, right, children, highlight }) {
       return (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ color: '#8b949e', fontSize: 12 }}>{left}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+          <span style={{ color: 'var(--muted)', fontSize: 11 }}>{left}</span>
           {children || (
-            <span style={{ fontSize: 12, color: highlight ? '#58a6ff' : '#c9d1d9', fontWeight: 500 }}>{right}</span>
+            <span style={{ fontSize: 11, color: highlight ? 'var(--accent)' : 'var(--text)', fontWeight: 500 }}>{right}</span>
           )}
         </div>
       );
     }
 
-    function ModelRow({ tag, color, bg, label }) {
+    function ModelTag({ tag, color, label }) {
       return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <span style={{ background: bg, color, padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
-            {tag}
-          </span>
-          <span style={{ color: '#8b949e', fontSize: 11 }}>{label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+          <span style={{
+            background: color + '1a', color, padding: '1px 6px', borderRadius: 3,
+            fontSize: 10, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0,
+          }}>{tag}</span>
+          <span style={{ color: 'var(--muted)', fontSize: 11 }}>{label}</span>
         </div>
       );
     }
 
-    // ----- Main App -----
-
+    // ── Example queries ──
     const EXAMPLES = [
       'Who is the CTO at Freshworks',
       'Find pharma companies in Hyderabad',
@@ -499,20 +566,21 @@
       'Founders of SaaS startups in Bangalore using AWS',
     ];
 
+    // ── App ──
     function App() {
-      const [messages, setMessages]         = useState([]);
-      const [query, setQuery]               = useState('');
-      const [loading, setLoading]           = useState(false);
-      const [elapsed, setElapsed]           = useState(0);
-      const [serverUp, setServerUp]         = useState(false);
-      const [stats, setStats]               = useState(null);
-      const [lastMsg, setLastMsg]           = useState(null);
-      const [nextEst, setNextEst]           = useState(null);
-      const [credits, setCredits]           = useState(null);
+      const [messages, setMessages]   = useState([]);
+      const [query, setQuery]         = useState('');
+      const [loading, setLoading]     = useState(false);
+      const [elapsed, setElapsed]     = useState(0);
+      const [serverUp, setServerUp]   = useState(false);
+      const [stats, setStats]         = useState(null);
+      const [lastMsg, setLastMsg]     = useState(null);
+      const [nextEst, setNextEst]     = useState(null);
+      const [credits, setCredits]     = useState(null);
       const [creditsRefreshed, setCreditsRefreshed] = useState(null);
-      const bottomRef  = useRef(null);
-      const timerRef   = useRef(null);
-      const startRef   = useRef(null);
+      const bottomRef = useRef(null);
+      const timerRef  = useRef(null);
+      const startRef  = useRef(null);
 
       // Health check
       useEffect(() => {
@@ -538,14 +606,11 @@
         return () => clearInterval(id);
       }, [fetchStats]);
 
-      // Credits polling — every 30 s; also called after each chat response
+      // Credits polling
       const fetchCredits = useCallback(async () => {
         try {
           const r = await fetch(`${BASE}/api/credits`);
-          if (r.ok) {
-            setCredits(await r.json());
-            setCreditsRefreshed(new Date());
-          }
+          if (r.ok) { setCredits(await r.json()); setCreditsRefreshed(new Date()); }
         } catch {}
       }, []);
 
@@ -560,7 +625,7 @@
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, [messages, loading]);
 
-      // Live next-query estimate as user types
+      // Live query type estimate
       useEffect(() => {
         setNextEst(query.trim() ? guessType(query) : null);
       }, [query]);
@@ -573,9 +638,7 @@
         setLoading(true);
         setElapsed(0);
         startRef.current = Date.now();
-        timerRef.current = setInterval(() => {
-          setElapsed((Date.now() - startRef.current) / 1000);
-        }, 100);
+        timerRef.current = setInterval(() => setElapsed((Date.now() - startRef.current) / 1000), 100);
 
         try {
           const res = await fetch(`${BASE}/chat`, {
@@ -589,22 +652,18 @@
             role            : 'assistant',
             content         : data.message,
             status          : data.status,
-            contacts        : data.contacts  || [],
-            companies       : data.companies || [],
-            errors          : data.errors    || [],
+            contacts        : data.contacts   || [],
+            companies       : data.companies  || [],
+            errors          : data.errors     || [],
             elapsed         : data.elapsed_seconds || el,
             estimated_tokens: data.estimated_tokens || 0,
           };
           setMessages(prev => [...prev, msg]);
           setLastMsg(msg);
-          fetchStats();
-          fetchCredits();
+          fetchStats(); fetchCredits();
         } catch (err) {
-          const el = (Date.now() - startRef.current) / 1000;
-          const msg = {
-            role: 'assistant', content: 'Failed to connect to the server.',
-            status: 'unknown', errors: [err.message], elapsed: el, estimated_tokens: 0,
-          };
+          const el  = (Date.now() - startRef.current) / 1000;
+          const msg = { role: 'assistant', content: 'Failed to connect to the server.', status: 'unknown', errors: [err.message], elapsed: el, estimated_tokens: 0 };
           setMessages(prev => [...prev, msg]);
           setLastMsg(msg);
         } finally {
@@ -619,52 +678,73 @@
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-          {/* Header */}
+
+          {/* ── Header ── */}
           <header style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '12px 20px', borderBottom: '1px solid #30363d', background: '#161b22', flexShrink: 0,
+            padding: '11px 20px', borderBottom: '1px solid var(--border)',
+            background: 'var(--surface)', flexShrink: 0,
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 16, fontWeight: 600 }}>
-              <span style={{ color: '#58a6ff', fontSize: 20 }}>◉</span>
-              Lead Gen Agent
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Reticle size={20} />
               <span style={{
-                width: 8, height: 8, borderRadius: '50%', display: 'inline-block',
-                background: serverUp ? '#3fb950' : '#f85149',
-              }} />
-              <span style={{ color: '#8b949e', fontSize: 12 }}>
-                {serverUp ? 'Server online' : 'Server offline'}
+                fontFamily: "'Space Grotesk', -apple-system, sans-serif",
+                fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text)',
+              }}>
+                Lead Gen Agent
               </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: serverUp ? 'var(--accent)' : 'var(--red)', display: 'inline-block' }} />
+              <span style={{ color: 'var(--muted)', fontSize: 11 }}>{serverUp ? 'online' : 'offline'}</span>
             </div>
           </header>
 
-          {/* Body */}
+          {/* ── Body ── */}
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
             {/* Chat column */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
               {/* Messages */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Empty state */}
                 {messages.length === 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 8, color: '#8b949e', textAlign: 'center', padding: 40 }}>
-                    <div style={{ fontSize: 40, color: '#30363d', marginBottom: 4 }}>◉</div>
-                    <div style={{ fontSize: 18, fontWeight: 600, color: '#c9d1d9' }}>Lead Gen Agent</div>
-                    <div style={{ fontSize: 13 }}>Find decision makers at any company. Role is optional — defaults to Founder / CEO / MD. Try:</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, width: '100%', maxWidth: 420 }}>
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center',
+                    justifyContent: 'center', flex: 1, textAlign: 'center', padding: 48, gap: 10,
+                  }}>
+                    <Reticle size={52} opacity={0.55} />
+                    <div style={{
+                      fontFamily: "'Space Grotesk', -apple-system, sans-serif",
+                      fontSize: 22, fontWeight: 600, color: 'var(--text)',
+                      letterSpacing: '-0.02em', marginTop: 6,
+                    }}>
+                      Lead Gen Agent
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 340, lineHeight: 1.65 }}>
+                      Find decision makers at any company.{' '}
+                      <span style={{ color: 'var(--accent)' }}>Role is optional</span>
+                      {' '}— defaults to Founder / CEO / MD.
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 14, width: '100%', maxWidth: 400 }}>
                       {EXAMPLES.map((ex, i) => (
-                        <div key={i} className="example-chip"
-                          onClick={() => setQuery(ex)}
+                        <div key={i} className="chip" onClick={() => setQuery(ex)}
                           style={{
-                            background: '#161b22', border: '1px solid #30363d',
-                            borderRadius: 8, padding: '9px 14px', fontSize: 13,
-                            cursor: 'pointer', textAlign: 'left', color: '#8b949e',
+                            background: 'var(--surface)', border: '1px solid var(--border)',
+                            borderRadius: 7, padding: '9px 14px', fontSize: 13,
+                            cursor: 'pointer', textAlign: 'left', color: 'var(--muted)',
+                            display: 'flex', alignItems: 'center', gap: 10,
                           }}>
+                          <span style={{ color: 'var(--accent)', fontFamily: "'JetBrains Mono', monospace", fontSize: 13, flexShrink: 0 }}>›</span>
                           {ex}
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+
                 {messages.map((m, i) =>
                   m.role === 'user'
                     ? <UserMsg key={i} content={m.content} />
@@ -676,20 +756,21 @@
 
               {/* Input bar */}
               <div style={{
-                display: 'flex', gap: 10, padding: '14px 24px',
-                borderTop: '1px solid #30363d', background: '#0d1117', flexShrink: 0,
+                padding: '12px 20px 14px', borderTop: '1px solid var(--border)',
+                background: 'var(--bg)', flexShrink: 0,
+                display: 'flex', gap: 10, alignItems: 'flex-end',
               }}>
                 <textarea
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   onKeyDown={onKey}
                   disabled={loading}
-                  placeholder="e.g. Who is the CTO at Freshworks  —  or  Find pharma companies in Hyderabad"
+                  placeholder="e.g. Find pharma companies in Hyderabad  ·  Who is the CTO at Freshworks"
                   rows={2}
                   style={{
-                    flex: 1, background: '#161b22', border: '1px solid #30363d',
-                    borderRadius: 8, color: '#c9d1d9', padding: '10px 14px',
-                    fontSize: 14, resize: 'none', fontFamily: 'inherit',
+                    flex: 1, background: 'var(--surface)', border: '1px solid var(--border)',
+                    borderRadius: 8, color: 'var(--text)', padding: '10px 14px',
+                    fontSize: 13.5, resize: 'none', fontFamily: 'inherit', lineHeight: 1.5,
                   }}
                 />
                 <button
@@ -697,10 +778,11 @@
                   onClick={handleSend}
                   disabled={!query.trim() || loading}
                   style={{
-                    background: '#238636', color: '#fff', border: 'none',
-                    borderRadius: 8, padding: '0 20px', fontSize: 14,
-                    fontWeight: 600, cursor: 'pointer', flexShrink: 0,
-                    opacity: (!query.trim() || loading) ? 0.45 : 1,
+                    background: 'var(--accent)', color: '#060c10', border: 'none',
+                    borderRadius: 8, padding: '0 22px', height: 54, fontSize: 13,
+                    fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+                    opacity: (!query.trim() || loading) ? 0.3 : 1,
+                    fontFamily: "'Space Grotesk', sans-serif", letterSpacing: '0.02em',
                   }}
                 >
                   {loading ? '…' : 'Send'}
@@ -708,7 +790,7 @@
               </div>
             </div>
 
-            {/* Stats sidebar */}
+            {/* Sidebar */}
             <StatsPanel stats={stats} lastMsg={lastMsg} nextEst={nextEst}
               credits={credits} creditsRefreshed={creditsRefreshed} />
           </div>
