@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 
 import aiohttp
@@ -6,7 +7,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
-SEARXNG_URL = "http://localhost:8080/search"
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080/search")
 
 # Email permutation patterns — tried in order by Contact Enricher
 _PATTERNS = [

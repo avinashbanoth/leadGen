@@ -54,16 +54,16 @@ _EXTRACT_NAMES_PROMPT = """You are a B2B researcher. The text below was scraped 
 Your job is to extract SPECIFIC company brand names from it.
 
 Rules:
-- Return ONLY proper company brand names (e.g. "Razorpay", "Cashfree", "CRED", "Groww")
+- Return ONLY proper company brand names (e.g. "Acme Corp", "Vertex Systems", "NovaTech", "BluePeak")
 - Each name must be a specific company, NOT a generic category word
-- Do NOT include: "Fintech", "Startup", "Company", "India", "Bangalore", "Technology", "Solutions"
+- Do NOT include generic words like: "Technology", "Solutions", "Startup", "Company", "Software"
   (these are category words, not company names)
-- Each name should be at least 2 words long OR a unique brand word (not a dictionary word)
+- Each name should be at least 2 words long OR a unique brand word (not a plain dictionary word)
 - Return 5–10 names maximum
 - Return ONLY a JSON array of strings. No explanation.
 
-Good output: ["Razorpay", "Cashfree", "CRED", "PhonePe", "Groww", "BharatPe"]
-Bad output: ["Fintech", "PaymentSource", "India", "Startup"]
+Good output: ["Acme Corp", "Vertex Systems", "NovaTech", "BluePeak", "Meridian Software"]
+Bad output: ["Technology", "Solutions", "Startup", "Company", "Software"]
 
 Text:
 {text}"""
@@ -81,22 +81,24 @@ IMMEDIATELY set matches=false for ANY of these:
 - List articles ("Top 10...", "Best X companies...")
 - Generic resource or blog pages (/blog/, /resources/, /guides/, /news/)
 - Freelancer or job marketplaces
-- Travel, tourism, food, hospitality, entertainment, or media companies
-  (these are NEVER B2B technology targets regardless of their tech stack)
 
-STEP 2 — If it IS a real company website, does its industry STRICTLY match the target?
-Use STRICT matching — a generic label like "software development" does NOT match "fintech":
-- Target "fintech" → ONLY accept: fintech, payments, banking tech, lending tech, insurance tech, digital payments
-- Target "logistics" → ONLY accept: logistics, supply chain, freight, shipping, 3PL, warehousing
-- Target "SaaS" → ONLY accept: SaaS, cloud software, B2B software
-- Target "healthcare" → ONLY accept: health tech, medical software, pharma tech
-- Target "PLM" → ONLY accept: PLM (Product Lifecycle Management), CAD software, CAM, PDM, manufacturing software, engineering software
-- Target "ERP" → ONLY accept: ERP (Enterprise Resource Planning), business management software, accounting software
-- Target "CRM" → ONLY accept: CRM (Customer Relationship Management), sales software, marketing automation
-- If target is "software" or "tech" broadly → accept software companies
-- NEVER accept tourism, travel, media, news, retail or unrelated industries
-
+STEP 2 — Does this company match the target criteria?
 Target criteria: {criteria}
+
+Evaluate STRICTLY against the criteria above — the criteria defines the industry and location.
+Do NOT apply any fixed rules about which industries "count" — use only the criteria provided.
+Any legitimate business that matches the stated industry and location qualifies.
+
+If the criteria specifies a LOCATION:
+- The company must be BASED IN or primarily serving that location
+- A company merely having an office or satellite team in that location does NOT qualify
+- If you cannot determine the company's primary location from the page content, set matches=false
+
+If the criteria specifies an INDUSTRY:
+- The company must operate in that sector as its primary business
+- A generic "software development" or "IT services" company does NOT match a specific sector
+  unless the page clearly shows domain-specific products (e.g. a healthcare-specific SaaS)
+
 Website content (first 2000 chars):
 {raw_text}
 
@@ -160,7 +162,7 @@ _SKIP_DOMAINS = {
     "startupranking.com", "startupbonsai.com", "f6s.com",
     "ynos.in", "tofler.in", "zaubacorp.com",
     "tradebrains.in", "entrackr.com", "afaqs.com",
-    "plaid.com", "ibm.com", "worldbank.org",  # return generic fintech pages
+    "worldbank.org",
 }
 
 # Domains to skip in Phase 1 (content is never a company-name list)
@@ -298,15 +300,40 @@ async def _infer_industry(raw_text: str, criteria_str: str) -> tuple[str, bool]:
 # ---------------------------------------------------------------------------
 
 _LOCATION_SLUG_MAP = {
+    # India
     "bangalore": "bengaluru", "bengaluru": "bengaluru",
-    "mumbai": "mumbai", "delhi": "new-delhi",
+    "mumbai": "mumbai", "delhi": "new-delhi", "new delhi": "new-delhi",
     "hyderabad": "hyderabad", "pune": "pune", "chennai": "chennai",
+    "kolkata": "kolkata", "ahmedabad": "ahmedabad", "jaipur": "jaipur",
+    "kochi": "kochi", "lucknow": "lucknow", "indore": "indore",
     "india": "india",
+    # Europe
     "germany": "germany", "deutschland": "germany",
+    "france": "france", "netherlands": "netherlands", "spain": "spain",
+    "italy": "italy", "sweden": "sweden", "norway": "norway",
+    "denmark": "denmark", "finland": "finland", "austria": "austria",
+    "switzerland": "switzerland", "belgium": "belgium", "poland": "poland",
+    "portugal": "portugal", "czech republic": "czech-republic", "czechia": "czech-republic",
+    "romania": "romania", "hungary": "hungary", "greece": "greece",
+    # English-speaking
     "usa": "united-states", "us": "united-states", "united states": "united-states",
     "uk": "united-kingdom", "united kingdom": "united-kingdom",
-    "singapore": "singapore", "australia": "australia",
-    "france": "france", "netherlands": "netherlands",
+    "australia": "australia", "canada": "canada", "new zealand": "new-zealand",
+    "ireland": "ireland",
+    # Asia-Pacific
+    "singapore": "singapore", "japan": "japan",
+    "south korea": "south-korea", "korea": "south-korea",
+    "china": "china", "hong kong": "hong-kong",
+    "taiwan": "taiwan", "indonesia": "indonesia", "malaysia": "malaysia",
+    "thailand": "thailand", "vietnam": "vietnam", "philippines": "philippines",
+    "bangladesh": "bangladesh", "sri lanka": "sri-lanka",
+    # Middle East & Africa
+    "uae": "united-arab-emirates", "dubai": "dubai", "abu dhabi": "abu-dhabi",
+    "saudi arabia": "saudi-arabia", "israel": "israel",
+    "egypt": "egypt", "south africa": "south-africa", "nigeria": "nigeria", "kenya": "kenya",
+    # Americas
+    "brazil": "brazil", "mexico": "mexico", "colombia": "colombia",
+    "argentina": "argentina", "chile": "chile", "peru": "peru",
 }
 
 
@@ -314,29 +341,12 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-# Locations where ensun.io + europages have reliable, curated company data
-_DIRECTORY_SUPPORTED_LOCATIONS = {
-    "germany", "deutschland", "france", "netherlands", "uk", "united-kingdom",
-    "spain", "italy", "sweden", "norway", "denmark", "finland",
-    "austria", "switzerland", "belgium", "poland", "portugal",
-    "singapore", "australia", "canada",
-    "usa", "united-states", "us",
-}
-
-
 def _build_directory_urls(industry: str, location: str) -> list[str]:
-    """Build direct URLs for known company directories that have predictable URL patterns.
-    Only used for locations where these directories have reliable, curated data.
-    """
+    """Build direct URLs for known company directories that have predictable URL patterns."""
     urls: list[str] = []
     if not industry or not location:
         return urls
     loc_lower = location.lower()
-    # Skip India/Bangalore — SearXNG Phase 1B finds better results via builtin.com etc.
-    if any(l in loc_lower for l in ("india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune", "chennai")):
-        return urls
-    if loc_lower not in _DIRECTORY_SUPPORTED_LOCATIONS:
-        return urls
     ind_slug = _slugify(industry)
     loc_slug = _LOCATION_SLUG_MAP.get(loc_lower, _slugify(location))
     # ensun.io: well-indexed company directory
@@ -475,18 +485,53 @@ def _candidate_domains(company_name: str, location: str) -> list[str]:
     slug = re.sub(r"-{2,}", "-", slug)
     if not slug or len(slug) < 2:
         return []
-    tlds = [".com"]
-    loc = location.lower()
-    if loc in ("germany", "deutschland"):
-        tlds = [".de", ".com"]
-    elif loc in ("uk", "united kingdom", "united-kingdom"):
-        tlds = [".co.uk", ".com"]
-    elif loc in ("france"):
-        tlds = [".fr", ".com"]
-    elif loc in ("netherlands"):
-        tlds = [".nl", ".com"]
-    elif loc in ("india", "bangalore", "bengaluru", "mumbai", "delhi"):
-        tlds = [".com", ".in"]
+    _COUNTRY_TLDS: dict[str, list[str]] = {
+        "germany": [".de", ".com"], "deutschland": [".de", ".com"],
+        "uk": [".co.uk", ".com"], "united kingdom": [".co.uk", ".com"],
+        "united-kingdom": [".co.uk", ".com"],
+        "france": [".fr", ".com"],
+        "netherlands": [".nl", ".com"],
+        "australia": [".com.au", ".com"],
+        "new zealand": [".co.nz", ".com"],
+        "japan": [".co.jp", ".jp", ".com"],
+        "brazil": [".com.br", ".com"],
+        "mexico": [".com.mx", ".com"],
+        "south korea": [".co.kr", ".kr", ".com"], "korea": [".co.kr", ".kr", ".com"],
+        "india": [".in", ".com"],
+        "bangalore": [".in", ".com"], "bengaluru": [".in", ".com"],
+        "mumbai": [".in", ".com"], "delhi": [".in", ".com"],
+        "hyderabad": [".in", ".com"], "pune": [".in", ".com"], "chennai": [".in", ".com"],
+        "kolkata": [".in", ".com"], "ahmedabad": [".in", ".com"],
+        "singapore": [".com.sg", ".sg", ".com"],
+        "spain": [".es", ".com"],
+        "italy": [".it", ".com"],
+        "sweden": [".se", ".com"],
+        "norway": [".no", ".com"],
+        "denmark": [".dk", ".com"],
+        "finland": [".fi", ".com"],
+        "austria": [".at", ".com"],
+        "switzerland": [".ch", ".com"],
+        "belgium": [".be", ".com"],
+        "poland": [".pl", ".com"],
+        "portugal": [".pt", ".com"],
+        "china": [".cn", ".com"],
+        "hong kong": [".hk", ".com"],
+        "indonesia": [".co.id", ".com"],
+        "malaysia": [".com.my", ".my", ".com"],
+        "thailand": [".co.th", ".th", ".com"],
+        "philippines": [".com.ph", ".ph", ".com"],
+        "israel": [".co.il", ".il", ".com"],
+        "canada": [".ca", ".com"],
+        "south africa": [".co.za", ".za", ".com"],
+        "uae": [".ae", ".com"], "dubai": [".ae", ".com"],
+        "saudi arabia": [".com.sa", ".sa", ".com"],
+        "argentina": [".com.ar", ".com"],
+        "colombia": [".com.co", ".com"],
+        "chile": [".cl", ".com"],
+        "nigeria": [".com.ng", ".ng", ".com"],
+        "kenya": [".co.ke", ".ke", ".com"],
+    }
+    tlds = _COUNTRY_TLDS.get(location.lower(), [".com"])
     candidates: list[str] = []
     for tld in tlds:
         candidates.append(f"https://www.{slug}{tld}")
@@ -693,62 +738,13 @@ async def company_search(state: GraphState) -> dict:
     location  = company_filters.get("location", "") or ""
     keywords  = " ".join(company_filters.get("keywords", []) or [])
 
-    # Indian state → capital city mapping: "Telangana" → "Hyderabad", etc.
-    # Applied to location before all search phases so SearXNG gets a geocodeable city.
-    _INDIAN_STATE_TO_CITY = {
-        "telangana": "Hyderabad",
-        "andhra pradesh": "Hyderabad",
-        "karnataka": "Bangalore",
-        "maharashtra": "Mumbai",
-        "tamil nadu": "Chennai",
-        "rajasthan": "Jaipur",
-        "gujarat": "Ahmedabad",
-        "uttar pradesh": "Lucknow",
-        "west bengal": "Kolkata",
-        "kerala": "Kochi",
-        "bihar": "Patna",
-        "odisha": "Bhubaneswar",
-        "madhya pradesh": "Indore",
-    }
-    if location:
-        loc_key = location.lower().strip()
-        if loc_key in _INDIAN_STATE_TO_CITY:
-            city = _INDIAN_STATE_TO_CITY[loc_key]
-            logger.info("company_search: mapped state '%s' → city '%s'", location, city)
-            location = city
-
-    # Fallback: if company_filters is empty, extract industry/location from the original query
-    # using a simple keyword scan — avoids wasting quota on a second LLM call
+    # If query_parser returned no filters, log it — the raw query will drive SearXNG directly
     if not industry and not location:
-        q_lower = original_query.lower()
-        _INDUSTRY_KEYWORDS = {
-            "fintech": "fintech", "payment": "fintech", "payments": "fintech", "banking": "fintech",
-            "saas": "SaaS", "software": "software", "cloud": "cloud",
-            "logistics": "logistics", "supply chain": "logistics", "freight": "logistics",
-            "healthcare": "healthcare", "pharma": "healthcare", "medtech": "healthcare",
-            "ecommerce": "e-commerce", "e-commerce": "e-commerce", "retail": "e-commerce",
-            "plm": "PLM", "erp": "ERP", "manufacturing": "manufacturing",
-        }
-        for kw, ind in _INDUSTRY_KEYWORDS.items():
-            if kw in q_lower:
-                industry = ind
-                break
-        # Include Indian state names alongside cities in the keyword scan
-        _LOCATION_KEYWORDS = [
-            "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune", "chennai",
-            "india", "germany", "usa", "uk", "singapore", "us",
-            "telangana", "andhra pradesh", "karnataka", "maharashtra", "tamil nadu",
-            "rajasthan", "gujarat", "uttar pradesh", "west bengal", "kerala",
-        ]
-        for loc in _LOCATION_KEYWORDS:
-            if loc in q_lower:
-                raw_loc = loc.title()
-                # Map Indian states to their capital city immediately
-                mapped = _INDIAN_STATE_TO_CITY.get(loc)
-                location = mapped if mapped else raw_loc
-                break
-        if industry or location:
-            logger.info("company_search: inferred from query — industry='%s' location='%s'", industry, location)
+        logger.warning(
+            "company_search: query_parser returned empty company_filters for '%s' "
+            "— will search using raw query terms",
+            original_query,
+        )
 
     # ── Phase 1A: try known company directories directly (most reliable) ────────
     company_names: list[str] = []
@@ -765,33 +761,25 @@ async def company_search(state: GraphState) -> dict:
 
     # ── Phase 1B: SearXNG fallback — only if Phase 1A found nothing ─────────
     if not company_names:
-        loc_lower = location.lower()
-        loc_with_country = location
-        _INDIAN_CITIES = {
-            "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune",
-            "chennai", "kolkata", "jaipur", "ahmedabad", "kochi", "lucknow",
-            "bhubaneswar", "indore", "patna", "india",
-        }
-        if any(c in loc_lower for c in _INDIAN_CITIES):
-            if "india" not in loc_lower:
-                loc_with_country = f"{location} India"
-
         def _list_queries() -> list[str]:
             ind = industry or ""
-            loc = loc_with_country or ""
+            loc = location or ""
             queries: list[str] = []
             if ind and loc:
                 queries.append(f"{ind} companies {loc}")
                 queries.append(f"top {ind} companies {loc}")
-                queries.append(f"{ind} vendors {loc}")
+                queries.append(f"{ind} B2B companies {loc}")
             elif ind:
-                queries.append(f"top {ind} companies list")
+                queries.append(f"top {ind} B2B companies")
                 queries.append(f"{ind} vendors list")
             elif loc:
-                queries.append(f"software companies {loc}")
-                queries.append(f"technology companies {loc}")
+                # No industry known — search using the raw query so we don't
+                # silently substitute "software companies" for whatever the user meant
+                queries.append(f"B2B companies {loc}")
+                queries.append(original_query)
             else:
-                queries.append("software companies list")
+                # No industry and no location — use the raw query verbatim
+                queries.append(original_query)
             return queries
 
         for list_query in _list_queries():

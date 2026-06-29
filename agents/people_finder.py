@@ -59,40 +59,30 @@ async def _score_title(found_title: str, target_role: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Level 2 fallback titles (Director/Manager level)
+# Level 2 fallback titles — LLM generates Director/Manager equivalents
 # ---------------------------------------------------------------------------
 
-_LEVEL2_FALLBACKS: dict[str, list[str]] = {
-    "cto": ["Director of Engineering", "Engineering Manager", "Head of Software Development",
-             "Platform Lead", "Senior Engineering Manager"],
-    "ceo": ["Managing Director", "General Manager", "President", "Partner", "Director"],
-    "cfo": ["Finance Manager", "Controller", "Head of Accounting", "Finance Director"],
-    "coo": ["Operations Manager", "Director of Operations", "Head of Operations"],
-    "vp engineering": ["Director of Engineering", "Engineering Manager", "Head of Software",
-                       "Senior Engineering Manager"],
-    "vp sales": ["Sales Manager", "Head of Business Development", "Sales Director",
-                 "Regional Sales Manager"],
-    "vp product": ["Product Manager", "Senior Product Manager", "Director of Product"],
-    "founder": ["Managing Director", "Co-Founder", "President", "Partner"],
-    "hr head": ["HR Manager", "Talent Acquisition Lead", "People Operations Manager",
-                "HR Business Partner"],
-    "ciso": ["Security Manager", "Head of Cybersecurity", "InfoSec Manager"],
-    "devops": ["DevOps Engineer", "SRE", "Platform Engineer", "Infrastructure Engineer"],
-}
-
-
-def _get_level2_fallback(target_role: str) -> list[str]:
-    key = target_role.lower().strip()
-    for dict_key, fallbacks in _LEVEL2_FALLBACKS.items():
-        if dict_key in key or key in dict_key:
-            return fallbacks
-    base = key.split(" or ")[0].strip()
-    return [
-        f"Director of {base.title()}",
-        f"Head of {base.title()}",
-        f"Manager, {base.title()}",
-        f"Senior {base.title()} Manager",
-    ]
+async def _get_level2_fallback(target_role: str) -> list[str]:
+    """Ask the LLM for Director/Manager-level equivalents of any role."""
+    base_role = target_role.split(" OR ")[0].strip()
+    prompt = (
+        f'List 5 Director or Manager level job titles that report to or are equivalent to "{base_role}". '
+        f'These should be mid-senior titles (Director, Manager, Head of, Lead), not C-suite. '
+        f'Return only a JSON array of strings. No explanation.'
+    )
+    try:
+        response = await _get_llm().ainvoke([HumanMessage(content=prompt)])
+        import re, json
+        match = re.search(r'\[.*?\]', response.content, re.DOTALL)
+        if match:
+            titles = json.loads(match.group())
+            if titles:
+                return [str(t) for t in titles if t]
+    except Exception as e:
+        logger.warning("people_finder: LLM fallback title generation failed — %s", e)
+    # Last resort: generic template
+    base = base_role.split(" or ")[0].strip()
+    return [f"Director of {base}", f"Head of {base}", f"Senior {base} Manager"]
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +228,7 @@ async def people_finder(state: GraphState) -> dict:
         errors.append(f"people_finder: role expansion failed — {e}")
         title_variants = [target_role]
 
-    fallback_variants = _get_level2_fallback(target_role)
+    fallback_variants = await _get_level2_fallback(target_role)
     logger.info(
         "people_finder: target='%s' | L1 titles=%s | L2 fallback=%s",
         target_role, title_variants[:3], fallback_variants[:2],

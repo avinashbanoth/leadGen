@@ -152,14 +152,10 @@ Expand the role to cover equivalent titles:
 - "founder" → "Founder / Co-founder / CEO / Managing Director"
 
 If the query explicitly names a role, use that role (expanded).
-If no role is mentioned but needs_clarification is false, infer the most likely decision-maker
-for that industry:
-- Tech / software / SaaS / PLM / ERP / cloud → "CTO OR VP Engineering OR Head of Technology OR IT Director"
-- Fintech / payments / banking → "CTO OR VP Engineering OR Head of Product"
-- E-commerce / retail → "CTO OR Head of Technology OR VP Product"
-- Logistics / supply chain / manufacturing → "VP Operations OR Head of Supply Chain OR CTO"
-- Healthcare / pharma → "CIO OR VP Technology OR Head of IT"
-- General or unknown industry → "CEO OR Founder OR Managing Director OR CTO"
+If no role is mentioned but needs_clarification is false, infer the most relevant decision-maker
+for the specific industry and context in the query. Think about who actually makes purchasing
+decisions in that sector — it varies by industry. Use your knowledge across all industries,
+not a fixed formula. Format as "Title1 OR Title2 OR Title3".
 Only set target_role to null when needs_clarification is true (query is too vague to act on).
 
 Return only valid JSON matching the QueryPlan schema. No explanation, no preamble, no markdown."""

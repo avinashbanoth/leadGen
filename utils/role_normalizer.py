@@ -5,113 +5,10 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
 
 
-# ---------------------------------------------------------------------------
-# Static role expansion dictionary — covers the most common B2B target roles.
-# Tried in order; LinkedIn search stops when results are found.
-# ---------------------------------------------------------------------------
-
-ROLE_EXPANSIONS: dict[str, list[str]] = {
-    "cto": [
-        "CTO",
-        "Chief Technology Officer",
-        "VP Engineering",
-        "VP of Engineering",
-        "Head of Technology",
-        "Head of Engineering",
-        "Co-founder & CTO",
-        "Director of Engineering",
-    ],
-    "ceo": [
-        "CEO",
-        "Chief Executive Officer",
-        "Founder & CEO",
-        "Co-founder & CEO",
-        "Managing Director",
-        "President",
-    ],
-    "cfo": [
-        "CFO",
-        "Chief Financial Officer",
-        "VP Finance",
-        "Head of Finance",
-        "Finance Director",
-    ],
-    "coo": [
-        "COO",
-        "Chief Operating Officer",
-        "VP Operations",
-        "Head of Operations",
-        "Director of Operations",
-    ],
-    "hr head": [
-        "HR Head",
-        "Head of HR",
-        "CHRO",
-        "Chief Human Resources Officer",
-        "VP People",
-        "VP Human Resources",
-        "Head of People",
-        "HR Director",
-        "Director of Human Resources",
-    ],
-    "vp engineering": [
-        "VP Engineering",
-        "VP of Engineering",
-        "Vice President Engineering",
-        "Head of Engineering",
-        "Director of Engineering",
-        "Engineering Director",
-    ],
-    "vp sales": [
-        "VP Sales",
-        "VP of Sales",
-        "Vice President Sales",
-        "Head of Sales",
-        "Sales Director",
-        "Director of Sales",
-        "Chief Revenue Officer",
-        "CRO",
-    ],
-    "founder": [
-        "Founder",
-        "Co-founder",
-        "CEO",
-        "Founder & CEO",
-        "Co-founder & CEO",
-        "Managing Director",
-    ],
-    "ciso": [
-        "CISO",
-        "Chief Information Security Officer",
-        "VP Security",
-        "Head of Security",
-        "Head of Cybersecurity",
-        "Director of Security",
-    ],
-    "devops": [
-        "DevOps Engineer",
-        "DevOps Lead",
-        "Head of DevOps",
-        "VP Infrastructure",
-        "Director of DevOps",
-        "Platform Engineering Lead",
-        "SRE Lead",
-    ],
-    "product manager": [
-        "Product Manager",
-        "Senior Product Manager",
-        "VP Product",
-        "Head of Product",
-        "Chief Product Officer",
-        "CPO",
-        "Director of Product",
-    ],
-}
-
-SEARXNG_URL = "http://localhost:8080/search"
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080/search")
 
 # ---------------------------------------------------------------------------
-# Lazy Gemini init — only used for roles not in the static dictionary
+# Groq LLM — used for all role expansions
 # ---------------------------------------------------------------------------
 
 _llm = None
@@ -131,9 +28,6 @@ def _get_llm():
 # ---------------------------------------------------------------------------
 # Role expansion
 # ---------------------------------------------------------------------------
-
-def _normalize_key(role: str) -> str:
-    return role.lower().strip()
 
 
 async def _expand_via_llm(role: str) -> list[str]:
@@ -159,16 +53,10 @@ async def _expand_via_llm(role: str) -> list[str]:
 
 async def expand_role(target_role: str) -> list[str]:
     """
-    Expands a target role into a list of equivalent LinkedIn titles.
-    Checks the static dictionary first; falls back to Gemini for unknown roles.
+    Expands any target role into equivalent LinkedIn job titles via LLM.
+    Works for any role in any industry — not limited to a static list.
     Returns the original role string as a single-item list if all else fails.
     """
-    key = _normalize_key(target_role)
-
-    for dict_key, expansions in ROLE_EXPANSIONS.items():
-        if dict_key in key or key in dict_key:
-            return expansions
-
     return await _expand_via_llm(target_role)
 
 

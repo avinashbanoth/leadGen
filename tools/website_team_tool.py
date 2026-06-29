@@ -11,8 +11,22 @@ from langchain_core.messages import HumanMessage
 logger = logging.getLogger(__name__)
 
 _TEAM_PATHS = [
+    # English
     "/team", "/about", "/leadership", "/management",
     "/about-us", "/our-team", "/people", "/company/team",
+    "/en/team", "/en/about", "/en/leadership",
+    # German
+    "/ueber-uns", "/uber-uns", "/team-de", "/fuehrung", "/unternehmen",
+    # French
+    "/equipe", "/a-propos", "/notre-equipe", "/direction",
+    # Spanish
+    "/equipo", "/sobre-nosotros", "/nuestro-equipo", "/direccion",
+    # Dutch
+    "/over-ons", "/ons-team", "/team-nl",
+    # Portuguese / Brazilian
+    "/equipe", "/sobre-nos", "/nossa-equipe",
+    # Other common patterns
+    "/about/team", "/company/about", "/company/leadership",
 ]
 _CRAWL_TIMEOUT = 15.0
 _MAX_TEXT_CHARS = 4000
@@ -49,8 +63,21 @@ def _get_llm():
 
 def _looks_like_team_page(text: str) -> bool:
     """Quick heuristic — does this page contain leadership content?"""
-    keywords = ["ceo", "cto", "founder", "director", "head of", "vice president",
-                "vp ", "chief", "manager", "president", "partner", "co-founder"]
+    keywords = [
+        # English
+        "ceo", "cto", "founder", "director", "head of", "vice president",
+        "vp ", "chief", "manager", "president", "partner", "co-founder",
+        # German
+        "geschäftsführer", "vorstand", "leiter", "gründer", "direktor",
+        # French
+        "directeur", "président", "fondateur", "directrice",
+        # Spanish
+        "director", "fundador", "gerente", "presidente",
+        # Dutch
+        "directeur", "oprichter", "manager",
+        # Generic
+        "ciso", "coo", "cfo", "chro", "cmo",
+    ]
     lower = text.lower()
     return sum(1 for kw in keywords if kw in lower) >= 2
 
