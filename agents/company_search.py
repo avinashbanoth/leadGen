@@ -296,6 +296,55 @@ async def _infer_industry(raw_text: str, criteria_str: str) -> tuple[str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 0 — Indian business directories (IndiaMart → JustDial)
+# Tried first for all queries; returns [] gracefully for non-Indian locations.
+# ---------------------------------------------------------------------------
+
+async def _try_indian_directories(industry: str, location: str, max_names: int = 8) -> list[str]:
+    """
+    Tries IndiaMart (Phase 0A, static HTML) then JustDial (Phase 0B, JS-rendered)
+    for company name discovery. Returns on the first that yields results.
+    Designed to return [] silently when the location has no IndiaMart/JustDial coverage.
+    """
+    if not industry or not location:
+        return []
+
+    # Phase 0A — IndiaMart
+    try:
+        from tools.indiamart_tool import search_indiamart_companies
+        results = await search_indiamart_companies.ainvoke({
+            "city"       : location,
+            "industry"   : industry,
+            "max_results": max_names,
+        })
+        if results:
+            names = [r["name"] for r in results if r.get("name")]
+            if names:
+                logger.info("company_search: Phase 0A (IndiaMart) → %d names", len(names))
+                return names
+    except Exception as e:
+        logger.warning("company_search: Phase 0A (IndiaMart) failed — %s", e)
+
+    # Phase 0B — JustDial fallback
+    try:
+        from tools.justdial_tool import search_justdial_businesses
+        results = await search_justdial_businesses.ainvoke({
+            "city"       : location,
+            "category"   : industry,
+            "max_results": max_names,
+        })
+        if results:
+            names = [r["name"] for r in results if r.get("name")]
+            if names:
+                logger.info("company_search: Phase 0B (JustDial) → %d names", len(names))
+                return names
+    except Exception as e:
+        logger.warning("company_search: Phase 0B (JustDial) failed — %s", e)
+
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Phase 1A — Direct company directory queries (reliable, SearXNG-independent)
 # ---------------------------------------------------------------------------
 
@@ -746,18 +795,30 @@ async def company_search(state: GraphState) -> dict:
             original_query,
         )
 
-    # ── Phase 1A: try known company directories directly (most reliable) ────────
+    # ── Phase 0: Indian business directories (IndiaMart → JustDial) ─────────
     company_names: list[str] = []
-    from_directory = False  # tracks whether Phase 1A sourced these names
+    from_directory = False
     try:
         company_names = await asyncio.wait_for(
-            _try_directory_extraction(industry, location, max_names=8),
-            timeout=60.0,
+            _try_indian_directories(industry, location, max_names=8),
+            timeout=45.0,
         )
         if company_names:
             from_directory = True
     except Exception as e:
-        errors.append(f"company_search: Phase 1A failed — {e}")
+        errors.append(f"company_search: Phase 0 (IndiaMart/JustDial) failed — {e}")
+
+    # ── Phase 1A: try known company directories directly (most reliable) ────────
+    if not company_names:
+        try:
+            company_names = await asyncio.wait_for(
+                _try_directory_extraction(industry, location, max_names=8),
+                timeout=60.0,
+            )
+            if company_names:
+                from_directory = True
+        except Exception as e:
+            errors.append(f"company_search: Phase 1A failed — {e}")
 
     # ── Phase 1B: SearXNG fallback — only if Phase 1A found nothing ─────────
     if not company_names:
