@@ -7,6 +7,8 @@ from langchain_core.messages import HumanMessage
 from graph.state import GraphState
 from utils.role_normalizer import expand_role
 from tools.apollo_tool import search_apollo_people
+from tools.kompass_tool import search_kompass_executives
+from tools.zaubacorp_tool import search_zaubacorp_directors
 from tools.website_team_tool import search_website_team
 from tools.crosslinked_tool import search_crosslinked_people
 
@@ -86,7 +88,7 @@ async def _get_level2_fallback(target_role: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# 3-layer cascade: Apollo → Website team → Google dorks
+# 5-layer cascade: Apollo → Kompass → Zaubacorp → Website team → Google dorks
 # ---------------------------------------------------------------------------
 
 async def _run_3_layers(
@@ -97,8 +99,10 @@ async def _run_3_layers(
 ) -> list[dict]:
     """
     Layer A: Apollo.io people search (primary — real B2B database).
-    Layer B: Website team page scraper (SME fallback — no login needed).
-    Layer C: Google dorks via SearXNG (last resort — large public companies).
+    Layer B: Kompass India executive profiles (manufacturing, healthcare, B2B).
+    Layer C: Zaubacorp MCA directors (official Indian government registry).
+    Layer D: Website team page scraper (generic fallback — no login needed).
+    Layer E: Google dorks via SearXNG (last resort — large public companies).
     Returns on the first layer that yields results.
     """
     # Layer A — Apollo
@@ -112,7 +116,31 @@ async def _run_3_layers(
         logger.info("people_finder: Layer A (Apollo) failed for '%s' — %s", company_name, e)
         people = []
 
-    # Layer B — Website team pages
+    # Layer B — Kompass executive profiles
+    if not people:
+        try:
+            people = await search_kompass_executives.ainvoke({
+                "company_name" : company_name,
+                "target_titles": title_variants,
+                "max_results"  : max_results,
+            })
+        except Exception as e:
+            logger.info("people_finder: Layer B (Kompass) failed for '%s' — %s", company_name, e)
+            people = []
+
+    # Layer C — Zaubacorp MCA directors
+    if not people:
+        try:
+            people = await search_zaubacorp_directors.ainvoke({
+                "company_name" : company_name,
+                "target_titles": title_variants,
+                "max_results"  : max_results,
+            })
+        except Exception as e:
+            logger.info("people_finder: Layer C (Zaubacorp) failed for '%s' — %s", company_name, e)
+            people = []
+
+    # Layer D — Website team pages
     if not people:
         try:
             people = await asyncio.wait_for(
@@ -125,13 +153,13 @@ async def _run_3_layers(
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
-            logger.info("people_finder: Layer B (website team) timed out for '%s'", company_name)
+            logger.info("people_finder: Layer D (website team) timed out for '%s'", company_name)
             people = []
         except Exception as e:
-            logger.info("people_finder: Layer B (website team) failed for '%s' — %s", company_name, e)
+            logger.info("people_finder: Layer D (website team) failed for '%s' — %s", company_name, e)
             people = []
 
-    # Layer C — Google dorks (crosslinked)
+    # Layer E — Google dorks (crosslinked)
     if not people:
         try:
             people = await search_crosslinked_people.ainvoke({
@@ -141,7 +169,7 @@ async def _run_3_layers(
                 "max_results"   : max_results,
             })
         except Exception as e:
-            logger.info("people_finder: Layer C (dorks) failed for '%s' — %s", company_name, e)
+            logger.info("people_finder: Layer E (dorks) failed for '%s' — %s", company_name, e)
             people = []
 
     return people or []
