@@ -297,10 +297,15 @@ def guard_router(state: GraphState) -> str:
 
 | Tool | Purpose |
 |---|---|
-| `SearXNG` | Self-hosted metasearch — builds search query dynamically from `company_filters.keywords + industry + location` |
-| `Crawl4AI` | Scrapes Crunchbase public pages — revenue, funding, headcount with confidence score |
-| `Google Maps Scraper` | Local business phone, address, website |
+| `SearXNG` | Self-hosted metasearch — `categories=map` when location present (business listings); `categories=general` otherwise; Groq 8b expands state/country to city list and runs one query per city |
+| `Overpass API` | OpenStreetMap business data — Nominatim geocodes location to bbox; keyword-filtered OSM office/shop/craft query; fallback to all named offices; free, no auth |
+| `Crawl4AI` | Scrapes company pages — revenue, funding, headcount with confidence score |
 | `Wappalyzer` | Detects tech stack from company website |
+
+**Phase 0 (location queries):** IndiaMart/JustDial + Overpass run concurrently; results merged and deduplicated.
+**Phase 1A:** Known company directories (Kompass, Zaubacorp, etc.).
+**Phase 1B:** SearXNG with map category + city expansion.
+**Phase 2:** Verify each name → find homepage via Crawl4AI.
 
 **Output shape:**
 ```json
@@ -486,6 +491,8 @@ Layer C: Google Dorks via SearXNG
 | Hunter.io | Email enrichment Level 1 | `HUNTER_API_KEY` | Free: 50 lookups/month |
 | SearXNG | Web search + Google dorks | None (self-hosted Docker) | Unlimited |
 | Crawl4AI | Web scraping (company pages, team pages) | None | Unlimited |
+| OpenStreetMap Overpass | Geographic business discovery | None | Free, unlimited |
+| Nominatim | Location → bounding box geocoding | None (User-Agent header required) | Free, unlimited |
 | GitHub API | Signal detection (issues, org members) | `GITHUB_TOKEN` (PAT) | Free: 5000 req/hr authenticated |
 | HackerNews | Signal detection (Ask HN threads) | None | Unlimited |
 | Groq | All LLM inference | `GROQ_API_KEY` | Free: 100K tokens/day (70b), higher limit for 8b |
@@ -517,15 +524,16 @@ lead-gen-agent/
 ├── agents/
 │   ├── query_parser.py                # extracts QueryPlan from raw query
 │   ├── clarification.py               # asks user for more info when vague
-│   ├── company_search.py              # SearXNG + Crawl4AI + Wappalyzer
+│   ├── company_search.py              # Phase 0: IndiaMart/JustDial + Overpass (concurrent) → Phase 1A dirs → Phase 1B SearXNG → Phase 2 verify
 │   ├── signal_filter.py               # Reddit + HN + GitHub + LinkedIn Jobs
 │   ├── people_finder.py               # 4-layer fallback + role normalizer
 │   ├── lead_scoring.py                # pure Gemini reasoning — no tools
 │   ├── contact_enricher.py            # EmailProvider abstraction chain
-│   └── result_formatter.py            # final output formatting
+│   └── result_formatter.py            # final output; domain dedup (1 contact/domain for company-search runs)
 │
 ├── tools/
-│   ├── searxng_tool.py                # @tool — dynamic query from QueryPlan
+│   ├── searxng_tool.py                # @tool — categories=map + Groq 8b city expansion for location queries
+│   ├── overpass_tool.py               # @tool — OpenStreetMap Overpass API; Nominatim geocode → bbox; business discovery
 │   ├── crawl4ai_tool.py               # @tool — confidence-scored extraction
 │   ├── linkedin_api_tool.py           # @tool — Voyager HTTP Layer 1
 │   ├── linkedin_scraper_tool.py       # @tool — Camoufox + stealth Layer 2

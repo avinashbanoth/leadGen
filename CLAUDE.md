@@ -231,7 +231,8 @@ Update this list after every completed component.
 - [x] `docker-compose.yml` — SearXNG on port 8080
 - [x] `searxng/settings.yml` — JSON format enabled, rate limiter off, safe_search=2
 - [x] `graph/state.py` — GraphState + all TypedDicts (needs `company_named_directly` added to QueryPlan)
-- [x] `tools/searxng_tool.py` — verified working
+- [x] `tools/searxng_tool.py` — categories=map for location queries + Groq 8b city expansion (state/country → cities); categories=general otherwise
+- [x] `tools/overpass_tool.py` — OpenStreetMap Overpass API, free/no-auth; Nominatim geocode → bbox; keyword-filtered OSM office/shop/craft query; fallback to general office search; wired into company_search Phase 0 alongside IndiaMart/JustDial (concurrent)
 
 ### Utilities
 - [x] `utils/role_normalizer.py` — role expansion + two-tier fallback map
@@ -258,7 +259,7 @@ Update this list after every completed component.
 
 ### Core Agents
 - [x] `tools/crawl4ai_tool.py` — confidence-scored company extraction
-- [x] `agents/company_search.py` — Phase 0 IndiaMart/JustDial → Phase 1A dirs → Phase 1B SearXNG → Phase 2 verify
+- [x] `agents/company_search.py` — Phase 0 IndiaMart/JustDial + Overpass (concurrent) → Phase 1A dirs → Phase 1B SearXNG (map category + city expansion) → Phase 2 verify
 - [x] `agents/people_finder.py` — Apollo (A) → Kompass (B) → Zaubacorp (C) → website team (D) → dorks (E)
 - [x] `graph/orchestrator.py` — full StateGraph wired
 
@@ -279,7 +280,7 @@ Update this list after every completed component.
 - [x] `agents/contact_enricher.py` — fresh providers per call, Apollo email short-circuit
 
 ### Output + API
-- [x] `agents/result_formatter.py`
+- [x] `agents/result_formatter.py` — domain deduplication (1 contact per unique domain when company_search in agents_needed); deduplicated flag in stats payload
 - [x] `api/main.py` — FastAPI POST /chat + GET /api/credits (live API key tracker)
 
 ### Frontend
@@ -315,4 +316,4 @@ After reading both, tell me:
 
 ---
 
-*Last updated: API credits tracker built (utils/api_tracker.py + GET /api/credits). Frontend updated with Tailwind CreditsSection — Groq key hint + query count, Hunter progress bar, Apollo dot. All pipeline code complete. Remaining: tests (test_tools, test_guard_router, test_graph) and end-to-end verification with 3 query types.*
+*Last updated: 4 quality fixes applied — (1) title hallucination: website_team_tool prompt rules + 3-step _clean_title() validator in people_finder; (2) entity variety: domain dedup in result_formatter (1 contact/domain for company-search runs); (3) SearXNG location fix: categories=map + Groq 8b city expansion for state/country queries; (4) OpenStreetMap Overpass: new tools/overpass_tool.py, wired into company_search Phase 0 alongside IndiaMart/JustDial (concurrent). All pipeline code complete. Remaining: tests + end-to-end verification.*
