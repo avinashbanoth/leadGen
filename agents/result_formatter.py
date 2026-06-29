@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections import defaultdict
 
 from graph.state import GraphState
@@ -7,6 +8,66 @@ from graph.state import GraphState
 logger = logging.getLogger(__name__)
 
 _STATUS_ICON = {"verified": "✓", "partial": "~", "not_found": "✗"}
+
+
+# ---------------------------------------------------------------------------
+# Entity-variety deduplication — 1 contact per domain for company-search runs
+# ---------------------------------------------------------------------------
+
+def _domain_key(contact: dict, domain_map: dict[str, str]) -> str:
+    """
+    Returns the canonical domain for a contact.
+    Looks up the company name in domain_map (built from GraphState.companies).
+    Falls back to a slugified company name when no domain is known — still
+    prevents two contacts from the same company appearing in the output.
+    """
+    company_upper = (contact.get("company") or "").upper().strip()
+    if company_upper in domain_map:
+        return domain_map[company_upper]
+    # Fallback: normalise company name (lowercase, strip punctuation)
+    return re.sub(r"[^a-z0-9]", "", company_upper.lower())
+
+
+def _deduplicate_by_domain(contacts: list[dict], companies: list[dict]) -> list[dict]:
+    """
+    Keeps the highest-scored contact per unique domain.
+    Called only when QueryPlan.agents_needed includes 'company_search'.
+    Stamps deduplicated=True on every contact in the returned list.
+    """
+    # Build domain map: COMPANY NAME → domain string
+    domain_map: dict[str, str] = {}
+    for co in companies:
+        name    = (co.get("name") or "").upper().strip()
+        website = (co.get("website") or "").strip()
+        if not name:
+            continue
+        if website.startswith("http"):
+            try:
+                domain = website.split("/")[2].replace("www.", "").lower()
+            except IndexError:
+                domain = ""
+        else:
+            domain = website.lower()
+        if domain:
+            domain_map[name] = domain
+
+    # Keep highest-scored contact per domain key
+    best: dict[str, dict] = {}
+    for c in contacts:
+        key      = _domain_key(c, domain_map)
+        existing = best.get(key)
+        if existing is None or (c.get("score", 0) > existing.get("score", 0)):
+            best[key] = c
+
+    result = list(best.values())
+    for c in result:
+        c["deduplicated"] = True
+
+    logger.info(
+        "result_formatter: deduplication — %d contacts → %d (1 per domain).",
+        len(contacts), len(result),
+    )
+    return result
 
 
 def _contact_line(contact: dict) -> str:
@@ -114,6 +175,18 @@ async def result_formatter(state: GraphState) -> dict:
         c.get("name", "").upper(): c for c in companies_state
     }
 
+    # ── Entity-variety deduplication ─────────────────────────────────────────
+    # When the pipeline searched for companies (not a named company lookup),
+    # we enforce 1 contact per domain so 5 contacts from the same firm don't
+    # crowd out leads from other companies the search found.
+    agents_needed       = plan.get("agents_needed", []) or []
+    should_deduplicate  = "company_search" in agents_needed
+    if should_deduplicate:
+        contacts = _deduplicate_by_domain(contacts, companies_state)
+    else:
+        for c in contacts:
+            c["deduplicated"] = False
+
     # Group contacts by company name (case-insensitive key)
     by_company: dict[str, list[dict]] = defaultdict(list)
     for c in contacts:
@@ -147,12 +220,13 @@ async def result_formatter(state: GraphState) -> dict:
     payload = {
         "query"   : query,
         "stats"   : {
-            "total"      : len(contacts),
-            "verified"   : len(verified),
-            "partial"    : len(partial),
-            "not_found"  : len(not_found),
-            "companies"  : len(by_company),
-            "errors"     : len(errors),
+            "total"        : len(contacts),
+            "verified"     : len(verified),
+            "partial"      : len(partial),
+            "not_found"    : len(not_found),
+            "companies"    : len(by_company),
+            "errors"       : len(errors),
+            "deduplicated" : should_deduplicate,
         },
         "contacts": contacts,
         "errors"  : errors,

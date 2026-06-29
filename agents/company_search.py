@@ -472,14 +472,24 @@ def _is_phase1_url_relevant(url: str, search_terms: list[str]) -> bool:
     return any(kw in url_lower for kw in specific)
 
 
-async def _extract_company_names_from_web(list_query: str, max_names: int = 8) -> list[str]:
+async def _extract_company_names_from_web(
+    list_query: str,
+    max_names : int = 8,
+    location  : str | None = None,
+) -> list[str]:
     """
     Searches for a list-article about companies, scrapes it, and extracts company names.
     Uses relevance filter: checks URL AND title for specific keywords before scraping.
     Tries up to 8 results before giving up.
+    When location is provided, passes it through so SearXNG uses categories=map,
+    returning business listings instead of news articles.
     """
     search_terms = list_query.split()
-    results = await searxng_search.ainvoke({"keywords": search_terms, "max_results": 8})
+    results = await searxng_search.ainvoke({
+        "keywords"   : search_terms,
+        "max_results": 8,
+        "location"   : location,
+    })
     for r in results:
         if "error" in r:
             continue
@@ -847,7 +857,11 @@ async def company_search(state: GraphState) -> dict:
             logger.info("company_search: Phase 1B SearXNG query: '%s'", list_query)
             try:
                 names = await asyncio.wait_for(
-                    _extract_company_names_from_web(list_query, max_names=8),
+                    _extract_company_names_from_web(
+                        list_query,
+                        max_names=8,
+                        location=location or None,
+                    ),
                     timeout=60.0,
                 )
                 if names:
