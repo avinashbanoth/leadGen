@@ -693,6 +693,30 @@ async def company_search(state: GraphState) -> dict:
     location  = company_filters.get("location", "") or ""
     keywords  = " ".join(company_filters.get("keywords", []) or [])
 
+    # Indian state → capital city mapping: "Telangana" → "Hyderabad", etc.
+    # Applied to location before all search phases so SearXNG gets a geocodeable city.
+    _INDIAN_STATE_TO_CITY = {
+        "telangana": "Hyderabad",
+        "andhra pradesh": "Hyderabad",
+        "karnataka": "Bangalore",
+        "maharashtra": "Mumbai",
+        "tamil nadu": "Chennai",
+        "rajasthan": "Jaipur",
+        "gujarat": "Ahmedabad",
+        "uttar pradesh": "Lucknow",
+        "west bengal": "Kolkata",
+        "kerala": "Kochi",
+        "bihar": "Patna",
+        "odisha": "Bhubaneswar",
+        "madhya pradesh": "Indore",
+    }
+    if location:
+        loc_key = location.lower().strip()
+        if loc_key in _INDIAN_STATE_TO_CITY:
+            city = _INDIAN_STATE_TO_CITY[loc_key]
+            logger.info("company_search: mapped state '%s' → city '%s'", location, city)
+            location = city
+
     # Fallback: if company_filters is empty, extract industry/location from the original query
     # using a simple keyword scan — avoids wasting quota on a second LLM call
     if not industry and not location:
@@ -709,13 +733,19 @@ async def company_search(state: GraphState) -> dict:
             if kw in q_lower:
                 industry = ind
                 break
+        # Include Indian state names alongside cities in the keyword scan
         _LOCATION_KEYWORDS = [
             "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune", "chennai",
             "india", "germany", "usa", "uk", "singapore", "us",
+            "telangana", "andhra pradesh", "karnataka", "maharashtra", "tamil nadu",
+            "rajasthan", "gujarat", "uttar pradesh", "west bengal", "kerala",
         ]
         for loc in _LOCATION_KEYWORDS:
             if loc in q_lower:
-                location = loc.title()
+                raw_loc = loc.title()
+                # Map Indian states to their capital city immediately
+                mapped = _INDIAN_STATE_TO_CITY.get(loc)
+                location = mapped if mapped else raw_loc
                 break
         if industry or location:
             logger.info("company_search: inferred from query — industry='%s' location='%s'", industry, location)
@@ -737,7 +767,12 @@ async def company_search(state: GraphState) -> dict:
     if not company_names:
         loc_lower = location.lower()
         loc_with_country = location
-        if any(c in loc_lower for c in ("bangalore", "bengaluru", "mumbai", "delhi", "india", "hyderabad", "pune", "chennai")):
+        _INDIAN_CITIES = {
+            "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune",
+            "chennai", "kolkata", "jaipur", "ahmedabad", "kochi", "lucknow",
+            "bhubaneswar", "indore", "patna", "india",
+        }
+        if any(c in loc_lower for c in _INDIAN_CITIES):
             if "india" not in loc_lower:
                 loc_with_country = f"{location} India"
 

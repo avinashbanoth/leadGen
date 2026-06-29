@@ -144,15 +144,36 @@ async def contact_enricher(state: GraphState) -> dict:
         return {"contacts": [], "errors": errors}
 
     _MAX_ENRICH = 5
+    _MAX_PER_COMPANY = 2  # spread contacts across companies, not all from one
     if lead_scores:
         score_map = {ls.get("person", "").lower(): ls.get("score", 0) for ls in lead_scores}
         people = sorted(people, key=lambda p: score_map.get(p.get("name", "").lower(), 0), reverse=True)
-    people = people[:_MAX_ENRICH]
+
+    # Distribute across companies: pick at most _MAX_PER_COMPANY per company first
+    company_counts: dict[str, int] = {}
+    distributed: list[dict] = []
+    for p in people:
+        co = (p.get("company") or "").lower()
+        if company_counts.get(co, 0) < _MAX_PER_COMPANY:
+            distributed.append(p)
+            company_counts[co] = company_counts.get(co, 0) + 1
+        if len(distributed) >= _MAX_ENRICH:
+            break
+    # Fill remaining slots from remainder (any company) if we're still under the cap
+    if len(distributed) < _MAX_ENRICH:
+        seen = set(id(p) for p in distributed)
+        for p in people:
+            if id(p) not in seen:
+                distributed.append(p)
+                seen.add(id(p))
+            if len(distributed) >= _MAX_ENRICH:
+                break
+    people = distributed
 
     if len(people) < len(state.get("people", [])):
         logger.info(
-            "contact_enricher: capped to top %d of %d people (quota conservation).",
-            len(people), len(state.get("people", [])),
+            "contact_enricher: selected %d of %d people (max %d/company, cap %d).",
+            len(people), len(state.get("people", [])), _MAX_PER_COMPANY, _MAX_ENRICH,
         )
 
     _PER_PERSON_TIMEOUT = 30.0
