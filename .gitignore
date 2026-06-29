@@ -19,7 +19,6 @@ searxng/uwsgi.ini
 
 # Claude Code session data
 .claude/
-CLAUDE.md
 
 # Node (for React frontend later)
 node_modules/
